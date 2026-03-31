@@ -1201,9 +1201,26 @@ function FormModal({ item, onSave, onClose, isEdit }) {
   const [form, setForm] = useState(item ? { ...defaults, ...item } : defaults);
   const tmdb = useTMDBSearch();
   const [showTMDB, setShowTMDB] = useState(false);
+  const [tmdbSeasons, setTmdbSeasons] = useState([]);
+  const [loadingSeasons, setLoadingSeasons] = useState(false);
   const titleRef = useRef(null);
 
   const set = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+  // On edit open, if TV show with existing tmdbId, pre-load seasons
+  useEffect(() => {
+    if (isEdit && item?.tmdbId && item?.type !== 'movie') {
+      setLoadingSeasons(true);
+      fetch(`https://api.themoviedb.org/3/tv/${item.tmdbId}?api_key=${TMDB_API_KEY}`)
+        .then(r => r.json())
+        .then(d => {
+          const seasons = (d.seasons || []).filter(s => s.season_number > 0);
+          setTmdbSeasons(seasons);
+        })
+        .catch(() => {})
+        .finally(() => setLoadingSeasons(false));
+    }
+  }, []);
 
   const handleTitleChange = (e) => {
     const val = e.target.value;
@@ -1230,6 +1247,30 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     // Auto-fill network from watch providers
     const provider = await fetchProviders(result.id, form.type);
     if (provider) set('network', provider);
+    // For TV shows, fetch seasons list
+    const mediaType = (result.media_type || form.type) === 'movie' ? 'movie' : 'tv';
+    if (mediaType === 'tv') {
+      setLoadingSeasons(true);
+      try {
+        const tvRes = await fetch(`https://api.themoviedb.org/3/tv/${result.id}?api_key=${TMDB_API_KEY}`);
+        const tvData = await tvRes.json();
+        const seasons = (tvData.seasons || []).filter(s => s.season_number > 0);
+        setTmdbSeasons(seasons);
+      } catch(e) { setTmdbSeasons([]); }
+      setLoadingSeasons(false);
+    } else {
+      setTmdbSeasons([]);
+    }
+  };
+
+  const handleSeasonSelect = async (seasonNum) => {
+    set('season', String(seasonNum));
+    if (!form.tmdbId || !seasonNum) return;
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/tv/${form.tmdbId}/season/${seasonNum}?api_key=${TMDB_API_KEY}`);
+      const data = await res.json();
+      if (data.air_date) set('releaseDate', data.air_date);
+    } catch(e) {}
   };
 
   const handleSubmit = (e) => {
@@ -1301,10 +1342,22 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 
               {/* Season */}
               <div className="form-group">
-                <label>Season</label>
-                <input className="form-input" value={form.season}
-                  onChange={e => set('season', e.target.value)}
-                  placeholder="e.g. 1, 1-3, All" />
+                <label>Season{loadingSeasons && <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:6}}>loading…</span>}</label>
+                {tmdbSeasons.length > 0 ? (
+                  <select className="form-select" value={form.season}
+                    onChange={e => handleSeasonSelect(e.target.value)}>
+                    <option value="">Select season…</option>
+                    {tmdbSeasons.map(s => (
+                      <option key={s.season_number} value={String(s.season_number)}>
+                        Season {s.season_number}{s.air_date ? ` (${s.air_date.slice(0,4)})` : ''}{s.episode_count ? ` · ${s.episode_count} eps` : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input className="form-input" value={form.season}
+                    onChange={e => set('season', e.target.value)}
+                    placeholder="e.g. 1, 1-3, All" />
+                )}
               </div>
 
               {/* Who */}
