@@ -1620,6 +1620,12 @@ function ContentCard({ item, onClick }) {
             <StarRating rating={item.rating} size={12} />
           </div>
         )}
+        {item.overview && (
+          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4,lineHeight:1.4,
+            display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>
+            {item.overview}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1758,7 +1764,7 @@ function App({ user, onSignOut }) {
   const [filterStatus, setFilterStatus] = useState('unwatched');
   const [filterType, setFilterType] = useState('all');
   const [filterWho, setFilterWho] = useState('all');
-  const [filterNetwork, setFilterNetwork] = useState('all');
+  const [filterNetworks, setFilterNetworks] = useState([]); // array, empty = all
   const [filterRating, setFilterRating] = useState('all');
   const [sortBy, setSortBy] = useState('status');
   const [sortDir, setSortDir] = useState('asc');
@@ -1778,6 +1784,7 @@ function App({ user, onSignOut }) {
   const [posterProgress, setPosterProgress] = useState(null);
   const [platformProgress, setPlatformProgress] = useState(null);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
 
@@ -1879,7 +1886,7 @@ function App({ user, onSignOut }) {
 
     if (filterType !== 'all') result = result.filter(i => i.type === filterType);
     if (filterWho !== 'all') result = result.filter(i => i.who === filterWho);
-    if (filterNetwork !== 'all') result = result.filter(i => i.network === filterNetwork);
+    if (filterNetworks.length > 0) result = result.filter(i => filterNetworks.includes(i.network));
 
     if (filterRating !== 'all') {
       const r = parseFloat(filterRating);
@@ -1916,7 +1923,7 @@ function App({ user, onSignOut }) {
     });
 
     return result;
-  }, [items, search, filterStatus, filterType, filterWho, filterNetwork, filterRating, sortBy, sortDir]);
+  }, [items, search, filterStatus, filterType, filterWho, filterNetworks, filterRating, sortBy, sortDir]);
 
   const displayed = filtered.slice(0, displayCount);
 
@@ -2080,6 +2087,11 @@ function App({ user, onSignOut }) {
                       onClick={() => { setShowToolsMenu(false); fetchAllPlatforms(); }}>
                       📡 Fetch streaming platforms
                     </button>
+                    <div style={{height:1,background:'var(--border)',margin:'4px 0'}}/>
+                    <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                      onClick={() => { setShowToolsMenu(false); setShowDupesModal(true); }}>
+                      🔍 Find duplicates
+                    </button>
                   </div>
                 )}
               </div>
@@ -2115,7 +2127,7 @@ function App({ user, onSignOut }) {
       {/* Stats */}
       <div className="stats-bar">
         <div className="stats-inner">
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetwork('all'); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
           <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
           <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
           <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
@@ -2132,7 +2144,7 @@ function App({ user, onSignOut }) {
         {/* Mobile filter toggle */}
         <div className="filter-mobile-bar" onClick={() => setFiltersOpen(f => !f)}>
           <span style={{fontSize:13, fontWeight:600, color:'var(--text-secondary)'}}>
-            🎛 Filters {(filterStatus!=='unwatched'||filterType!=='all'||filterWho!=='all'||filterNetwork!=='all'||filterRating!=='all') && <span style={{color:'var(--accent-gold)'}}>●</span>}
+            🎛 Filters {(filterStatus!=='unwatched'||filterType!=='all'||filterWho!=='all'||filterNetworks.length>0||filterRating!=='all') && <span style={{color:'var(--accent-gold)'}}>●</span>}
           </span>
           <span style={{color:'var(--text-muted)', fontSize:12}}>{filtersOpen ? '▲ Hide' : '▼ Show'}</span>
         </div>
@@ -2180,24 +2192,18 @@ function App({ user, onSignOut }) {
           {/* Platform / network filter */}
           <div className="filter-section">
             <span className="filter-label">Platform</span>
-            <select
-              value={filterNetwork}
-              onChange={e => { setFilterNetwork(e.target.value); setDisplayCount(60); }}
-              style={{
-                background: filterNetwork !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)',
-                color: filterNetwork !== 'all' ? '#000' : 'var(--text-secondary)',
-                border: '1px solid var(--border)', borderRadius: 20,
-                padding: '5px 12px', fontSize: 12, fontWeight: 600,
-                cursor: 'pointer', outline: 'none',
-              }}>
-              <option value="all">All platforms</option>
-              <optgroup label="Your subscriptions">
-                {MY_SUBS.map(n => <option key={n} value={n}>{n}</option>)}
-              </optgroup>
-              <optgroup label="Other">
-                {NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort().map(n => <option key={n} value={n}>{n}</option>)}
-              </optgroup>
-            </select>
+            {[...MY_SUBS, ...NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort()].map(n => (
+              <span key={n}
+                className={`filter-chip ${filterNetworks.includes(n) ? 'active' : ''}`}
+                onClick={() => {
+                  setFilterNetworks(prev =>
+                    prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n]
+                  );
+                  setDisplayCount(60);
+                }}>
+                {n}
+              </span>
+            ))}
           </div>
 
           <div className="filter-divider" />
@@ -2244,16 +2250,16 @@ function App({ user, onSignOut }) {
           </div>
 
           {/* Clear filters */}
-          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetwork !== 'all' || filterRating !== 'all' || search || sortBy !== 'status') && (
+          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
             <div className="filter-divider" />
           )}
-          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetwork !== 'all' || filterRating !== 'all' || search || sortBy !== 'status') && (
+          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
             <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350', whiteSpace:'nowrap'}}
               onClick={() => {
                 setFilterStatus('unwatched');
                 setFilterType('all');
                 setFilterWho('all');
-                setFilterNetwork('all');
+                setFilterNetworks([]);
                 setFilterRating('all');
                 setSortBy('status');
                 setSortDir('asc');
@@ -2320,10 +2326,11 @@ function App({ user, onSignOut }) {
                           return next;
                         })}>
                         <td>
-                          <div style={{display:'flex',alignItems:'center',gap:8}}>
-                            <span style={{fontSize:11,color:'var(--text-muted)',width:12}}>{isExpanded ? '▼' : '▶'}</span>
+                          <div style={{display:'flex',alignItems:'center',gap:6}}>
+                            {(() => { const p = row.posterUrl || (row._items.find(i=>i.posterUrl)||{}).posterUrl; return p ? <img src={p} className='table-poster-thumb' alt='' loading='lazy' /> : null; })()}
+                            <span style={{fontSize:11,color:'var(--text-muted)',width:12,flexShrink:0}}>{isExpanded ? '▼' : '▶'}</span>
                             <span style={{fontWeight:600}}>{row.title}</span>
-                            <span style={{fontSize:10,background:'rgba(245,197,24,0.15)',color:'var(--accent-gold)',padding:'1px 6px',borderRadius:4,fontWeight:700}}>
+                            <span style={{fontSize:10,background:'rgba(245,197,24,0.15)',color:'var(--accent-gold)',padding:'1px 6px',borderRadius:4,fontWeight:700,flexShrink:0}}>
                               {row._items.length} seasons
                             </span>
                           </div>
@@ -2343,9 +2350,12 @@ function App({ user, onSignOut }) {
                     return (
                       <tr key={`${row.id}-${row.season}-child`} style={{background:'rgba(0,0,0,0.15)',cursor:'pointer'}}
                         onClick={() => handleCardClick(row)}>
-                        <td style={{paddingLeft:32}}>
-                          <span style={{color:'var(--text-muted)',fontSize:11,marginRight:6}}>└</span>
-                          <span style={{fontSize:13}}>Season {row.season}</span>
+                        <td>
+                          <div style={{display:'flex',alignItems:'center',gap:6,paddingLeft:16}}>
+                            {row.posterUrl ? <img src={row.posterUrl} className='table-poster-thumb' alt='' loading='lazy' /> : <div style={{width:20,flexShrink:0}}/>}
+                            <span style={{color:'var(--text-muted)',fontSize:11}}>└</span>
+                            <span style={{fontSize:13,marginLeft:4}}>Season {row.season || '?'}</span>
+                          </div>
                         </td>
                         <td><span className={`tag ${getStatusTagClass(row.status)}`}>{getStatusLabel(row.status)}</span></td>
                         <td style={{textAlign:'center'}}>{row.priority || '—'}</td>
@@ -2389,6 +2399,73 @@ function App({ user, onSignOut }) {
           onEdit={(item) => { setDetailItem(null); setEditItem(item); }}
           onDelete={handleDelete} />
       )}
+
+      {/* Dupes modal */}
+      {showDupesModal && (() => {
+        const groups = {};
+        items.forEach(item => {
+          const key = (item.title || '').toLowerCase().trim();
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(item);
+        });
+        const dupeGroups = Object.values(groups).filter(g => g.length > 1).sort((a,b) => a[0].title.localeCompare(b[0].title));
+        return (
+          <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setShowDupesModal(false)}>
+            <div className="modal" style={{maxWidth:700}}>
+              <div className="modal-header">
+                <h2>🔍 Find Duplicates</h2>
+                <button className="modal-close" onClick={() => setShowDupesModal(false)}>&times;</button>
+              </div>
+              <div className="modal-body" style={{maxHeight:'65vh',overflowY:'auto'}}>
+                {dupeGroups.length === 0 ? (
+                  <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>
+                    🎉 No duplicate titles found!
+                  </div>
+                ) : (
+                  <>
+                  <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)'}}>
+                    Found {dupeGroups.length} title{dupeGroups.length>1?'s':''} with multiple entries. Click 🗑 to delete a specific entry.
+                  </div>
+                  {dupeGroups.map(group => (
+                    <div key={group[0].title} style={{
+                      marginBottom:16,background:'var(--bg-secondary)',borderRadius:10,
+                      border:'1px solid var(--border)',overflow:'hidden'
+                    }}>
+                      <div style={{padding:'8px 14px',background:'rgba(245,197,24,0.08)',
+                        borderBottom:'1px solid var(--border)',fontWeight:600,fontSize:13}}>
+                        {group[0].title} <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:11}}>({group.length} entries)</span>
+                      </div>
+                      {group.map(item => (
+                        <div key={item.id} style={{
+                          display:'flex',alignItems:'center',gap:10,padding:'8px 14px',
+                          borderBottom:'1px solid rgba(255,255,255,0.04)'
+                        }}>
+                          {item.posterUrl && <img src={item.posterUrl} style={{width:28,height:40,objectFit:'cover',borderRadius:3,flexShrink:0}} alt="" />}
+                          <div style={{flex:1,fontSize:12}}>
+                            <span style={{color:'var(--text-muted)'}}>S{item.season || '—'}</span>
+                            {' · '}
+                            <span className={`tag ${getStatusTagClass(item.status)}`} style={{fontSize:10}}>{getStatusLabel(item.status)}</span>
+                            {item.rating > 0 && <> · <span>★{item.rating}</span></>}
+                            {' · '}<span style={{color:'var(--text-muted)'}}>{item.network || 'no network'}</span>
+                            {item.ratedDate && <span style={{color:'var(--text-muted)',marginLeft:8}}>{item.ratedDate.slice(0,10)}</span>}
+                          </div>
+                          <button
+                            style={{background:'rgba(239,83,80,0.15)',border:'1px solid rgba(239,83,80,0.3)',
+                              color:'#ef5350',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:12,flexShrink:0}}
+                            onClick={() => { if(window.confirm('Delete this entry?')) handleDelete(item); }}>
+                            🗑 Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
