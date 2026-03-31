@@ -212,6 +212,14 @@
     font-size: 16px;
   }
 
+  .clickable-stat {
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 2px 6px;
+    transition: background 0.15s;
+  }
+  .clickable-stat:hover { background: rgba(245,197,24,0.08); }
+
   /* Filter bar */
   .filter-bar {
     padding: 12px 24px;
@@ -728,6 +736,12 @@
   }
 
   /* Responsive */
+  .filter-mobile-bar {
+    display: none;
+  }
+  .filter-inner-wrap { display: block; }
+  .tools-desktop-only { display: flex; }
+
   @media (max-width: 768px) {
     .header-inner { flex-direction: column; align-items: stretch; gap: 12px; }
     .search-bar { max-width: 100%; }
@@ -742,6 +756,11 @@
     .modal { margin: 10px; max-height: 95vh; }
     .header { padding: 12px 16px; }
     .filter-bar { padding: 8px 16px; top: auto; position: relative; }
+    .filter-mobile-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; cursor: pointer; }
+    .filter-inner-wrap { display: none; }
+    .filter-inner-wrap.open { display: block; }
+    .filter-inner { flex-wrap: wrap; }
+    .tools-desktop-only { display: none !important; }
   }
 
   @media (max-width: 480px) {
@@ -1093,6 +1112,7 @@ async function autoFetchPoster(firestoreId, title, type) {
     const result = data.results?.[0];
     if (!result) return;
     const updates = { tmdbId: result.id };
+    if (result.overview) updates.overview = result.overview;
     if (result.poster_path) updates.posterUrl = TMDB_IMG_BASE + result.poster_path;
     const provider = await fetchProviders(result.id, type);
     if (provider) updates.network = provider;
@@ -1176,7 +1196,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
   const defaults = {
     title: '', status: 'want_to_watch', priority: '1', type: 'tv',
     season: '', who: 'together', network: '', rating: 0,
-    releaseDate: '', nonFree: false, posterUrl: '', ratedDate: '',
+    releaseDate: '', nonFree: false, posterUrl: '', ratedDate: '', overview: '', tmdbId: null,
   };
   const [form, setForm] = useState(item ? { ...defaults, ...item } : defaults);
   const tmdb = useTMDBSearch();
@@ -1204,6 +1224,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     set('posterUrl', posterPath);
     set('tmdbId', result.id);
     if (releaseDate) set('releaseDate', releaseDate);
+    if (result.overview) set('overview', result.overview);
     setShowTMDB(false);
     tmdb.clear();
     // Auto-fill network from watch providers
@@ -1478,6 +1499,12 @@ function DetailModal({ item, onClose, onEdit, onDelete }) {
             <span className="detail-field-value">{item.ratedDate || '—'}</span>
           </div>
 
+          {item.overview && (
+            <div style={{marginTop:12, padding:'10px 14px', background:'var(--bg-card)', borderRadius:8, fontSize:13, color:'var(--text-secondary)', lineHeight:1.5}}>
+              {item.overview}
+            </div>
+          )}
+
           <div className="form-actions">
             <button className="btn btn-danger btn-sm" onClick={() => { onDelete(item.id); onClose(); }}>
               🗑 Delete
@@ -1678,6 +1705,8 @@ function App({ user, onSignOut }) {
   const [posterProgress, setPosterProgress] = useState(null);
   const [platformProgress, setPlatformProgress] = useState(null);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
 
   const fetchAllPosters = useCallback(async () => {
     const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
@@ -1768,6 +1797,8 @@ function App({ user, onSignOut }) {
     if (filterStatus !== 'all') {
       if (filterStatus === 'unwatched') {
         result = result.filter(i => i.status !== 'watched' && i.status !== 'dont_watch');
+      } else if (filterStatus === 'watching') {
+        result = result.filter(i => i.status.startsWith('watching'));
       } else {
         result = result.filter(i => i.status === filterStatus);
       }
@@ -1815,6 +1846,35 @@ function App({ user, onSignOut }) {
   }, [items, search, filterStatus, filterType, filterWho, filterNetwork, filterRating, sortBy, sortDir]);
 
   const displayed = filtered.slice(0, displayCount);
+
+  // Group by title for table view
+  const tableRows = useMemo(() => {
+    const groups = new Map();
+    filtered.forEach(item => {
+      const key = item.title.toLowerCase().trim();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+    const result = [];
+    const seen = new Set();
+    filtered.forEach(item => {
+      const key = item.title.toLowerCase().trim();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const group = groups.get(key);
+      if (group.length === 1) {
+        result.push({ _type: 'item', ...group[0] });
+      } else {
+        const rated = group.filter(i => i.rating > 0);
+        const avg = rated.length ? Math.round(rated.reduce((s,i) => s+i.rating,0)/rated.length*2)/2 : 0;
+        result.push({ _type: 'group', _key: key, _items: group, _avgRating: avg, ...group[0] });
+        if (expandedGroups.has(key)) {
+          group.forEach(i => result.push({ _type: 'child', _groupKey: key, ...i }));
+        }
+      }
+    });
+    return result.slice(0, displayCount + (expandedGroups.size * 20));
+  }, [filtered, expandedGroups, displayCount]);
 
   // Stats
   const stats = useMemo(() => {
@@ -1905,7 +1965,7 @@ function App({ user, onSignOut }) {
             </button>
             {/* Tools dropdown */}
             {TMDB_API_KEY && (
-              <div style={{position:'relative'}}>
+              <div className="tools-desktop-only" style={{position:'relative'}}>
                 {(posterProgress || platformProgress) ? (
                   <div style={{
                     display:'flex', alignItems:'center', gap:8,
@@ -1961,6 +2021,7 @@ function App({ user, onSignOut }) {
             </div>
           </div>
         </div>
+        </div>{/* filter-inner-wrap */}
       </div>
 
       {/* First-time import banner */}
@@ -1982,11 +2043,11 @@ function App({ user, onSignOut }) {
       {/* Stats */}
       <div className="stats-bar">
         <div className="stats-inner">
-          <div className="stat"><span className="stat-num">{stats.total}</span> total</div>
-          <div className="stat"><span className="stat-num">{stats.watched}</span> watched</div>
-          <div className="stat"><span className="stat-num">{stats.watching}</span> watching</div>
-          <div className="stat"><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
-          <div className="stat"><span className="stat-num">{stats.rated}</span> rated</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetwork('all'); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setSortBy('rating'); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
           <div className="stat"><span className="stat-num">{stats.avgRating}</span> avg ⭐</div>
           <div className="stat" style={{marginLeft:'auto', color:'var(--text-muted)', fontSize: 11}}>
             Showing {Math.min(displayCount, filtered.length)} of {filtered.length}
@@ -1996,6 +2057,14 @@ function App({ user, onSignOut }) {
 
       {/* Filters */}
       <div className="filter-bar">
+        {/* Mobile filter toggle */}
+        <div className="filter-mobile-bar" onClick={() => setFiltersOpen(f => !f)}>
+          <span style={{fontSize:13, fontWeight:600, color:'var(--text-secondary)'}}>
+            🎛 Filters {(filterStatus!=='unwatched'||filterType!=='all'||filterWho!=='all'||filterNetwork!=='all'||filterRating!=='all') && <span style={{color:'var(--accent-gold)'}}>●</span>}
+          </span>
+          <span style={{color:'var(--text-muted)', fontSize:12}}>{filtersOpen ? '▲ Hide' : '▼ Show'}</span>
+        </div>
+        <div className={`filter-inner-wrap ${filtersOpen ? 'open' : ''}`}>
         <div className="filter-inner">
           {/* Status filter */}
           <div className="filter-section">
@@ -2166,9 +2235,58 @@ function App({ user, onSignOut }) {
                 </tr>
               </thead>
               <tbody>
-                {displayed.map(item => (
-                  <ContentTableRow key={`${item.id}-${item.season}`} item={item} onClick={handleCardClick} />
-                ))}
+                {tableRows.map((row, idx) => {
+                  if (row._type === 'group') {
+                    const isExpanded = expandedGroups.has(row._key);
+                    const seasons = row._items.map(i => i.season).filter(Boolean);
+                    return (
+                      <tr key={row._key + '-group'} style={{background:'rgba(245,197,24,0.04)', cursor:'pointer'}}
+                        onClick={() => setExpandedGroups(prev => {
+                          const next = new Set(prev);
+                          next.has(row._key) ? next.delete(row._key) : next.add(row._key);
+                          return next;
+                        })}>
+                        <td>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <span style={{fontSize:11,color:'var(--text-muted)',width:12}}>{isExpanded ? '▼' : '▶'}</span>
+                            <span style={{fontWeight:600}}>{row.title}</span>
+                            <span style={{fontSize:10,background:'rgba(245,197,24,0.15)',color:'var(--accent-gold)',padding:'1px 6px',borderRadius:4,fontWeight:700}}>
+                              {row._items.length} seasons
+                            </span>
+                          </div>
+                        </td>
+                        <td><span className={`tag ${getStatusTagClass(row.status)}`}>{getStatusLabel(row.status)}</span></td>
+                        <td style={{textAlign:'center'}}>{row.priority || '—'}</td>
+                        <td>{getTypeEmoji(row.type)}</td>
+                        <td style={{fontSize:11,color:'var(--text-muted)'}}>{seasons.join(', ')}</td>
+                        <td>{getWhoEmoji(row.who)}</td>
+                        <td><span className="card-network">{row.network || '—'}</span></td>
+                        <td>{row._avgRating > 0 ? <StarRating rating={row._avgRating} size={12}/> : <span style={{color:'var(--text-muted)'}}>—</span>}</td>
+                        <td>{row.nonFree ? <span className="tag tag-nonfree">$</span> : ''}</td>
+                      </tr>
+                    );
+                  }
+                  if (row._type === 'child') {
+                    return (
+                      <tr key={`${row.id}-${row.season}-child`} style={{background:'rgba(0,0,0,0.15)',cursor:'pointer'}}
+                        onClick={() => handleCardClick(row)}>
+                        <td style={{paddingLeft:32}}>
+                          <span style={{color:'var(--text-muted)',fontSize:11,marginRight:6}}>└</span>
+                          <span style={{fontSize:13}}>Season {row.season}</span>
+                        </td>
+                        <td><span className={`tag ${getStatusTagClass(row.status)}`}>{getStatusLabel(row.status)}</span></td>
+                        <td style={{textAlign:'center'}}>{row.priority || '—'}</td>
+                        <td></td>
+                        <td style={{fontSize:12}}>{row.season}</td>
+                        <td>{getWhoEmoji(row.who)}</td>
+                        <td><span className="card-network">{row.network || '—'}</span></td>
+                        <td><StarRating rating={row.rating} size={12}/></td>
+                        <td>{row.nonFree ? <span className="tag tag-nonfree">$</span> : ''}</td>
+                      </tr>
+                    );
+                  }
+                  return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} />;
+                })}
               </tbody>
             </table>
             {displayCount < filtered.length && (
