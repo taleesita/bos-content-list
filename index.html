@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bo's Content List</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -836,10 +839,13 @@
 
 <div class="film-strip-top"></div>
 <div id="root"></div>
-
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<div id="fatal-error" style="display:none;padding:32px;color:#fff;background:#1a0010;font-family:monospace;font-size:14px;white-space:pre-wrap;position:fixed;inset:0;z-index:9999;overflow:auto;"></div>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('fatal-error');
+  if (el) { el.style.display = 'block'; el.textContent = '🎬 Load error:\n' + msg + '\n' + (err ? err.stack : '') + '\nSource: ' + src + ':' + line; }
+};
+</script>
 
 <script>
 const firebaseConfig = {
@@ -861,6 +867,20 @@ const INITIAL_DATA = [{"id":1,"title":"To All the Boys: Third Movie","status":"w
 </script>
 
 <script type="text/babel">
+// ── Error boundary to prevent blank screen on render crashes ─────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(err) { return { error: err }; }
+  render() {
+    if (this.state.error) {
+      return React.createElement('div', {
+        style: { padding: 32, color: '#fff', background: '#1a0010', fontFamily: 'monospace', fontSize: 14, whiteSpace: 'pre-wrap' }
+      }, '🎬 Bo\'s Content List ran into an error:\n\n' + String(this.state.error));
+    }
+    return this.props.children;
+  }
+}
+
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // ============ CONSTANTS ============
@@ -2376,7 +2396,7 @@ function App({ user, onSignOut }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<AuthWrapper><App /></AuthWrapper>);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><AuthWrapper><App /></AuthWrapper></ErrorBoundary>);
 </script>
 
 
