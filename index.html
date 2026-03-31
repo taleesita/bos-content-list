@@ -1540,6 +1540,43 @@ function App({ user, onSignOut }) {
     showToast(`🎬 Imported ${INITIAL_DATA.length} entries from your Airtable history!`);
   };
 
+  // Poster fetch
+  const [posterProgress, setPosterProgress] = useState(null); // null | { done, total }
+
+  const fetchAllPosters = useCallback(async () => {
+    const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
+    if (!missing.length) { showToast('✅ All items already have posters!'); return; }
+    setPosterProgress({ done: 0, total: missing.length });
+    let done = 0;
+    const batchSize = 5;
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const batch = missing.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+          const res = await fetch(
+            `https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}`
+          );
+          const data = await res.json();
+          const result = data.results?.[0];
+          if (result?.poster_path) {
+            await db.collection('content').doc(item.firestoreId).update({
+              posterUrl: TMDB_IMG_BASE + result.poster_path
+            });
+          }
+        } catch(e) {}
+        done++;
+        setPosterProgress({ done, total: missing.length });
+      }));
+      // Rate limit: pause between batches
+      if (i + batchSize < missing.length) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    setPosterProgress(null);
+    showToast('🎨 Poster fetch complete!');
+  }, [items]);
+
   // Toast helper
   const showToast = (msg) => {
     setToast(msg);
@@ -1684,6 +1721,31 @@ function App({ user, onSignOut }) {
             <button className="btn btn-primary" onClick={() => setShowForm(true)}>
               + Add
             </button>
+            {TMDB_API_KEY && items.some(i => !i.posterUrl) && !posterProgress && (
+              <button className="btn btn-secondary" onClick={fetchAllPosters}
+                title="Fetch missing posters from TMDB" style={{fontSize:13}}>
+                🎨 Fetch posters
+              </button>
+            )}
+            {posterProgress && (
+              <div style={{
+                display:'flex', alignItems:'center', gap:8,
+                background:'var(--bg-card)', border:'1px solid var(--border)',
+                borderRadius:8, padding:'6px 14px', fontSize:13
+              }}>
+                <span>🎨</span>
+                <div style={{width:100, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
+                  <div style={{
+                    width: `${(posterProgress.done/posterProgress.total*100).toFixed(0)}%`,
+                    height:'100%', background:'var(--accent-gold)',
+                    borderRadius:3, transition:'width 0.3s'
+                  }}/>
+                </div>
+                <span style={{color:'var(--text-muted)', fontSize:11}}>
+                  {posterProgress.done}/{posterProgress.total}
+                </span>
+              </div>
+            )}
             <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:4}}>
               {user?.photoURL && (
                 <img src={user.photoURL} alt={user.displayName}
