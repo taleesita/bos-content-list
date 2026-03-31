@@ -1930,14 +1930,31 @@ function App({ user, onSignOut }) {
           {/* Rating filter */}
           <div className="filter-section">
             <span className="filter-label">Rating</span>
-            <span className={`filter-chip ${filterRating==='all'?'active':''}`}
-              onClick={() => { setFilterRating('all'); setDisplayCount(60); }}>All</span>
-            {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5].map(r => (
-              <span key={r} className={`filter-chip ${filterRating===String(r)?'active':''}`}
-                onClick={() => { setFilterRating(String(r)); setDisplayCount(60); setFilterStatus('watched'); }}>
-                {r % 1 === 0 ? '★'.repeat(r) : '★'.repeat(Math.floor(r)) + '½'}
-              </span>
-            ))}
+            <select
+              value={filterRating}
+              onChange={e => {
+                setFilterRating(e.target.value);
+                setDisplayCount(60);
+                if (e.target.value !== 'all') setFilterStatus('watched');
+              }}
+              style={{
+                background: filterRating !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)',
+                color: filterRating !== 'all' ? '#000' : 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 20,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                outline: 'none',
+              }}>
+              <option value="all">All ratings</option>
+              {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5].map(r => (
+                <option key={r} value={String(r)}>
+                  {r % 1 === 0 ? '★'.repeat(r) : '★'.repeat(Math.floor(r)) + '½'} ({r})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="filter-divider" />
@@ -1950,6 +1967,27 @@ function App({ user, onSignOut }) {
                 onClick={() => handleSort(s.v)}>{s.l} {sortBy===s.v && (sortDir==='asc'?'↑':'↓')}</span>
             ))}
           </div>
+
+          {/* Clear filters */}
+          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetwork !== 'all' || filterRating !== 'all' || search || sortBy !== 'status') && (
+            <div className="filter-divider" />
+          )}
+          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetwork !== 'all' || filterRating !== 'all' || search || sortBy !== 'status') && (
+            <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350', whiteSpace:'nowrap'}}
+              onClick={() => {
+                setFilterStatus('unwatched');
+                setFilterType('all');
+                setFilterWho('all');
+                setFilterNetwork('all');
+                setFilterRating('all');
+                setSortBy('status');
+                setSortDir('asc');
+                setSearch('');
+                setDisplayCount(60);
+              }}>
+              ✕ Clear filters
+            </span>
+          )}
         </div>
       </div>
 
