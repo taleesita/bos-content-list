@@ -1041,6 +1041,24 @@ const formatDate = (date) => {
   return `${date.getMonth()+1}/${date.getDate()}/${date.getFullYear()} ${date.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}).toLowerCase()}`;
 };
 
+// ── Background poster fetcher (fires-and-forgets after save) ─────────────────
+async function autoFetchPoster(firestoreId, title, type) {
+  if (!TMDB_API_KEY || !title || !firestoreId) return;
+  try {
+    const mediaType = type === 'movie' ? 'movie' : 'tv';
+    const res = await fetch(
+      `https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}`
+    );
+    const data = await res.json();
+    const result = data.results?.[0];
+    if (result?.poster_path) {
+      await db.collection('content').doc(firestoreId).update({
+        posterUrl: TMDB_IMG_BASE + result.poster_path
+      });
+    }
+  } catch(e) {}
+}
+
 function useDataStore() {
   const [items, setItems] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -1067,8 +1085,13 @@ function useDataStore() {
       id: Date.now(),
       ratedDate: item.rating > 0 ? formatDate(now) : '',
       posterUrl: item.posterUrl || '',
+      noPoster: item.noPoster || false,
     };
-    await db.collection('content').add(newItem);
+    const docRef = await db.collection('content').add(newItem);
+    // Auto-fetch poster in background if none set and not flagged to skip
+    if (!newItem.posterUrl && !newItem.noPoster) {
+      autoFetchPoster(docRef.id, item.title, item.type);
+    }
   }, []);
 
   const updateItem = useCallback(async (id, updates) => {
@@ -1258,17 +1281,79 @@ function FormModal({ item, onSave, onClose, isEdit }) {
                 </div>
               </div>
 
-              {/* Poster URL */}
+              {/* Poster editor */}
               <div className="form-group full-width">
-                <label>Poster URL</label>
-                <div style={{display:'flex', gap: 8, alignItems: 'center'}}>
-                  <input className="form-input" style={{flex:1}} value={form.posterUrl}
-                    onChange={e => set('posterUrl', e.target.value)}
-                    placeholder="Auto-filled from TMDB, or paste URL" />
-                  {form.posterUrl && (
-                    <img src={form.posterUrl} style={{width: 40, height: 60, objectFit: 'cover', borderRadius: 4}}
-                      onError={e => e.target.style.display='none'} alt="" />
-                  )}
+                <label>Poster</label>
+                <div style={{display:'flex', gap: 12, alignItems: 'flex-start'}}>
+                  {/* Preview */}
+                  <div style={{
+                    width: 60, minWidth: 60, height: 90,
+                    background: 'var(--bg-primary)', borderRadius: 6,
+                    border: '1px solid var(--border)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    overflow: 'hidden', flexShrink: 0
+                  }}>
+                    {form.posterUrl ? (
+                      <img src={form.posterUrl} style={{width:'100%',height:'100%',objectFit:'cover'}}
+                        onError={e => e.target.style.display='none'} alt="" />
+                    ) : (
+                      <span style={{fontSize:24,opacity:0.3}}>{getPlaceholderIcon(form.type)}</span>
+                    )}
+                  </div>
+                  <div style={{flex:1, display:'flex', flexDirection:'column', gap:8}}>
+                    {/* TMDB re-search */}
+                    <div style={{position:'relative'}}>
+                      <input className="form-input" value={form.posterSearchQuery ?? form.title}
+                        onChange={e => {
+                          set('posterSearchQuery', e.target.value);
+                          if (e.target.value.length >= 2) { tmdb.search(e.target.value, form.type); setShowTMDB(true); }
+                          else { setShowTMDB(false); }
+                        }}
+                        placeholder="Search TMDB for a poster..." />
+                      {showTMDB && tmdb.results.length > 0 && (
+                        <div className="tmdb-dropdown">
+                          {tmdb.results.map(r => (
+                            <div key={r.id} className="tmdb-item" onClick={() => {
+                              set('posterUrl', r.poster_path ? TMDB_IMG_BASE + r.poster_path : '');
+                              set('posterSearchQuery', r.title || r.name || '');
+                              set('noPoster', false);
+                              setShowTMDB(false); tmdb.clear();
+                            }}>
+                              {r.poster_path && <img src={TMDB_IMG_BASE + r.poster_path} alt="" />}
+                              <div className="tmdb-item-info">
+                                <div className="tmdb-item-title">{r.title || r.name}</div>
+                                <div className="tmdb-item-year">{(r.release_date || r.first_air_date || '').slice(0,4)}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* Manual URL */}
+                    <input className="form-input" value={form.posterUrl}
+                      onChange={e => { set('posterUrl', e.target.value); if (e.target.value) set('noPoster', false); }}
+                      placeholder="Or paste a poster URL directly" />
+                    {/* Actions */}
+                    <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+                      {form.posterUrl && (
+                        <button type="button" className="btn btn-secondary btn-sm"
+                          onClick={() => { set('posterUrl', ''); }}>
+                          ✕ Clear poster
+                        </button>
+                      )}
+                      <button type="button"
+                        className={`btn btn-sm ${form.noPoster ? 'btn-danger' : 'btn-secondary'}`}
+                        onClick={() => { set('noPoster', !form.noPoster); if (!form.noPoster) set('posterUrl', ''); }}
+                        title="Permanently skip auto-fetch for this item">
+                        {form.noPoster ? '🚫 No poster (locked)' : '🚫 No poster'}
+                      </button>
+                    </div>
+                    {form.noPoster && (
+                      <div style={{fontSize:11,color:'var(--text-muted)'}}>
+                        Auto-fetch is disabled for this item. Toggle off to re-enable.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1526,6 +1611,7 @@ function App({ user, onSignOut }) {
   const [filterType, setFilterType] = useState('all');
   const [filterWho, setFilterWho] = useState('all');
   const [filterNetwork, setFilterNetwork] = useState('all');
+  const [filterRating, setFilterRating] = useState('all');
   const [sortBy, setSortBy] = useState('status');
   const [sortDir, setSortDir] = useState('asc');
   const [showForm, setShowForm] = useState(false);
@@ -1605,6 +1691,11 @@ function App({ user, onSignOut }) {
     if (filterWho !== 'all') result = result.filter(i => i.who === filterWho);
     if (filterNetwork !== 'all') result = result.filter(i => i.network === filterNetwork);
 
+    if (filterRating !== 'all') {
+      const r = parseFloat(filterRating);
+      result = result.filter(i => i.rating === r);
+    }
+
     // Status sort order: watching > watching_airing > watching_gap > want_to_watch > watched > dont_watch
     const STATUS_ORDER = {
       'watching': 0,
@@ -1635,7 +1726,7 @@ function App({ user, onSignOut }) {
     });
 
     return result;
-  }, [items, search, filterStatus, filterType, filterWho, filterNetwork, sortBy, sortDir]);
+  }, [items, search, filterStatus, filterType, filterWho, filterNetwork, filterRating, sortBy, sortDir]);
 
   const displayed = filtered.slice(0, displayCount);
 
@@ -1674,7 +1765,12 @@ function App({ user, onSignOut }) {
 
   const handleSort = (field) => {
     if (sortBy === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortBy(field); setSortDir('asc'); }
+    else {
+      setSortBy(field);
+      setSortDir('asc');
+      // Auto-filter to Watched when sorting by rating (only watched items have ratings)
+      if (field === 'rating') setFilterStatus('watched');
+    }
   };
 
   const SortArrow = ({ field }) => {
@@ -1826,6 +1922,21 @@ function App({ user, onSignOut }) {
             {WHO_OPTIONS.map(w => (
               <span key={w.value} className={`filter-chip ${filterWho===w.value?'active':''}`}
                 onClick={() => { setFilterWho(w.value); setDisplayCount(60); }}>{w.emoji}</span>
+            ))}
+          </div>
+
+          <div className="filter-divider" />
+
+          {/* Rating filter */}
+          <div className="filter-section">
+            <span className="filter-label">Rating</span>
+            <span className={`filter-chip ${filterRating==='all'?'active':''}`}
+              onClick={() => { setFilterRating('all'); setDisplayCount(60); }}>All</span>
+            {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5].map(r => (
+              <span key={r} className={`filter-chip ${filterRating===String(r)?'active':''}`}
+                onClick={() => { setFilterRating(String(r)); setDisplayCount(60); setFilterStatus('watched'); }}>
+                {r % 1 === 0 ? '★'.repeat(r) : '★'.repeat(Math.floor(r)) + '½'}
+              </span>
             ))}
           </div>
 
