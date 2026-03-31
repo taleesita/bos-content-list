@@ -877,8 +877,48 @@ const NETWORK_OPTIONS = [
   'Tubi','TVNZ','USA','Warner Bros','Youtube'
 ];
 
-const TMDB_API_KEY = '761b5bdc298a53e848abbc17ce7f81a3'; // User will add their own key
+const TMDB_API_KEY = '761b5bdc298a53e848abbc17ce7f81a3';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
+
+// Platforms you subscribe to — shown first in dropdowns
+const MY_SUBS = ['Netflix', 'Apple', 'Amazon Prime', 'Hulu', 'Disney', 'HBO / Max'];
+
+// Map TMDB provider names → our network labels
+const PROVIDER_MAP = {
+  'Netflix': 'Netflix',
+  'Amazon Prime Video': 'Amazon Prime', 'Amazon Video': 'Amazon Prime', 'Prime Video': 'Amazon Prime',
+  'Disney Plus': 'Disney', 'Disney+': 'Disney',
+  'Apple TV Plus': 'Apple', 'Apple TV+': 'Apple', 'Apple TV': 'Apple',
+  'Hulu': 'Hulu',
+  'Max': 'HBO / Max', 'HBO Max': 'HBO / Max', 'HBO Go': 'HBO / Max',
+  'Peacock Premium': 'Peacock', 'Peacock': 'Peacock',
+  'Paramount Plus': 'Paramount Plus', 'Paramount+': 'Paramount Plus',
+  'AMC+': 'AMC', 'AMC': 'AMC',
+  'Starz': 'Starz', 'BritBox': 'BBC', 'BBC iPlayer': 'BBC',
+  'Tubi TV': 'Tubi', 'Pluto TV': 'Pluto', 'YouTube': 'Youtube',
+  'FX Now': 'FX', 'Amazon Freevee': 'Freevee', 'Freevee': 'Freevee',
+  'USA Network': 'USA', 'NBC': 'NBC', 'ABC': 'ABC', 'CBS': 'CBS',
+  'Fox': 'Fox', 'Comedy Central': 'Comedy Central', 'Bravo': 'Bravo',
+  'HGTV': 'HGTV', 'Sci-Fi': 'Sci-fi', 'Warner Bros': 'Warner Bros',
+};
+
+// Fetch streaming providers for a TMDB id+type, returns our network label or null
+async function fetchProviders(tmdbId, type) {
+  if (!TMDB_API_KEY || !tmdbId) return null;
+  try {
+    const mediaType = type === 'movie' ? 'movie' : 'tv';
+    const res = await fetch(
+      `https://api.themoviedb.org/3/${mediaType}/${tmdbId}/watch/providers?api_key=${TMDB_API_KEY}`
+    );
+    const data = await res.json();
+    const us = data.results?.US;
+    const flatrate = us?.flatrate || [];
+    // Find first provider we recognise, prefer MY_SUBS
+    const all = flatrate.map(p => PROVIDER_MAP[p.provider_name]).filter(Boolean);
+    const subMatch = all.find(n => MY_SUBS.includes(n));
+    return subMatch || all[0] || null;
+  } catch(e) { return null; }
+}
 
 // ============ HELPER FUNCTIONS ============
 const getStatusBadgeClass = (status) => {
@@ -1041,7 +1081,7 @@ const formatDate = (date) => {
   return `${date.getMonth()+1}/${date.getDate()}/${date.getFullYear()} ${date.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}).toLowerCase()}`;
 };
 
-// ── Background poster fetcher (fires-and-forgets after save) ─────────────────
+// ── Background poster + provider fetcher (fire-and-forget after save) ────────
 async function autoFetchPoster(firestoreId, title, type) {
   if (!TMDB_API_KEY || !title || !firestoreId) return;
   try {
@@ -1051,11 +1091,12 @@ async function autoFetchPoster(firestoreId, title, type) {
     );
     const data = await res.json();
     const result = data.results?.[0];
-    if (result?.poster_path) {
-      await db.collection('content').doc(firestoreId).update({
-        posterUrl: TMDB_IMG_BASE + result.poster_path
-      });
-    }
+    if (!result) return;
+    const updates = { tmdbId: result.id };
+    if (result.poster_path) updates.posterUrl = TMDB_IMG_BASE + result.poster_path;
+    const provider = await fetchProviders(result.id, type);
+    if (provider) updates.network = provider;
+    await db.collection('content').doc(firestoreId).update(updates);
   } catch(e) {}
 }
 
@@ -1155,15 +1196,19 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     }
   };
 
-  const selectTMDB = (result) => {
+  const selectTMDB = async (result) => {
     const title = result.title || result.name || '';
     const posterPath = result.poster_path ? TMDB_IMG_BASE + result.poster_path : '';
     const releaseDate = result.release_date || result.first_air_date || '';
     set('title', title);
     set('posterUrl', posterPath);
+    set('tmdbId', result.id);
     if (releaseDate) set('releaseDate', releaseDate);
     setShowTMDB(false);
     tmdb.clear();
+    // Auto-fill network from watch providers
+    const provider = await fetchProviders(result.id, form.type);
+    if (provider) set('network', provider);
   };
 
   const handleSubmit = (e) => {
@@ -1313,11 +1358,14 @@ function FormModal({ item, onSave, onClose, isEdit }) {
                       {showTMDB && tmdb.results.length > 0 && (
                         <div className="tmdb-dropdown">
                           {tmdb.results.map(r => (
-                            <div key={r.id} className="tmdb-item" onClick={() => {
+                            <div key={r.id} className="tmdb-item" onClick={async () => {
                               set('posterUrl', r.poster_path ? TMDB_IMG_BASE + r.poster_path : '');
                               set('posterSearchQuery', r.title || r.name || '');
+                              set('tmdbId', r.id);
                               set('noPoster', false);
                               setShowTMDB(false); tmdb.clear();
+                              const provider = await fetchProviders(r.id, form.type);
+                              if (provider) set('network', provider);
                             }}>
                               {r.poster_path && <img src={TMDB_IMG_BASE + r.poster_path} alt="" />}
                               <div className="tmdb-item-info">
@@ -1626,8 +1674,10 @@ function App({ user, onSignOut }) {
     showToast(`🎬 Imported ${INITIAL_DATA.length} entries from your Airtable history!`);
   };
 
-  // Poster fetch
-  const [posterProgress, setPosterProgress] = useState(null); // null | { done, total }
+  // Fetch tools
+  const [posterProgress, setPosterProgress] = useState(null);
+  const [platformProgress, setPlatformProgress] = useState(null);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
 
   const fetchAllPosters = useCallback(async () => {
     const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
@@ -1661,6 +1711,42 @@ function App({ user, onSignOut }) {
     }
     setPosterProgress(null);
     showToast('🎨 Poster fetch complete!');
+  }, [items]);
+
+  const fetchAllPlatforms = useCallback(async () => {
+    const toFetch = items.filter(i => i.firestoreId && i.title);
+    if (!toFetch.length) { showToast('Nothing to fetch.'); return; }
+    setPlatformProgress({ done: 0, total: toFetch.length });
+    let done = 0;
+    const batchSize = 5;
+    for (let i = 0; i < toFetch.length; i += batchSize) {
+      const batch = toFetch.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          // Search TMDB to get the ID if we don't have it
+          let tmdbId = item.tmdbId;
+          if (!tmdbId) {
+            const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+            const res = await fetch(
+              `https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}`
+            );
+            const data = await res.json();
+            tmdbId = data.results?.[0]?.id;
+          }
+          if (tmdbId) {
+            const provider = await fetchProviders(tmdbId, item.type);
+            if (provider) {
+              await db.collection('content').doc(item.firestoreId).update({ network: provider, tmdbId });
+            }
+          }
+        } catch(e) {}
+        done++;
+        setPlatformProgress({ done, total: toFetch.length });
+      }));
+      if (i + batchSize < toFetch.length) await new Promise(r => setTimeout(r, 600));
+    }
+    setPlatformProgress(null);
+    showToast('📡 Platform data updated!');
   }, [items]);
 
   // Toast helper
@@ -1817,29 +1903,52 @@ function App({ user, onSignOut }) {
             <button className="btn btn-primary" onClick={() => setShowForm(true)}>
               + Add
             </button>
-            {TMDB_API_KEY && items.some(i => !i.posterUrl) && !posterProgress && (
-              <button className="btn btn-secondary" onClick={fetchAllPosters}
-                title="Fetch missing posters from TMDB" style={{fontSize:13}}>
-                🎨 Fetch posters
-              </button>
-            )}
-            {posterProgress && (
-              <div style={{
-                display:'flex', alignItems:'center', gap:8,
-                background:'var(--bg-card)', border:'1px solid var(--border)',
-                borderRadius:8, padding:'6px 14px', fontSize:13
-              }}>
-                <span>🎨</span>
-                <div style={{width:100, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
+            {/* Tools dropdown */}
+            {TMDB_API_KEY && (
+              <div style={{position:'relative'}}>
+                {(posterProgress || platformProgress) ? (
                   <div style={{
-                    width: `${(posterProgress.done/posterProgress.total*100).toFixed(0)}%`,
-                    height:'100%', background:'var(--accent-gold)',
-                    borderRadius:3, transition:'width 0.3s'
-                  }}/>
-                </div>
-                <span style={{color:'var(--text-muted)', fontSize:11}}>
-                  {posterProgress.done}/{posterProgress.total}
-                </span>
+                    display:'flex', alignItems:'center', gap:8,
+                    background:'var(--bg-card)', border:'1px solid var(--border)',
+                    borderRadius:8, padding:'6px 14px', fontSize:13
+                  }}>
+                    <span>{posterProgress ? '🎨' : '📡'}</span>
+                    <div style={{width:80, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
+                      <div style={{
+                        width: `${((posterProgress||platformProgress).done/(posterProgress||platformProgress).total*100).toFixed(0)}%`,
+                        height:'100%', background:'var(--accent-gold)', borderRadius:3, transition:'width 0.3s'
+                      }}/>
+                    </div>
+                    <span style={{color:'var(--text-muted)', fontSize:11}}>
+                      {(posterProgress||platformProgress).done}/{(posterProgress||platformProgress).total}
+                    </span>
+                  </div>
+                ) : (
+                  <button className="btn btn-secondary" onClick={() => setShowToolsMenu(m => !m)}
+                    style={{fontSize:13}}>
+                    🛠 Tools ▾
+                  </button>
+                )}
+                {showToolsMenu && !posterProgress && !platformProgress && (
+                  <div style={{
+                    position:'absolute', top:'calc(100% + 6px)', right:0,
+                    background:'var(--bg-card)', border:'1px solid var(--border)',
+                    borderRadius:10, padding:'6px', zIndex:50,
+                    minWidth:200, boxShadow:'0 8px 24px rgba(0,0,0,0.4)'
+                  }} onMouseLeave={() => setShowToolsMenu(false)}>
+                    <div style={{padding:'6px 10px 4px', fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:1}}>
+                      One-time fetches
+                    </div>
+                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
+                      onClick={() => { setShowToolsMenu(false); fetchAllPosters(); }}>
+                      🎨 Fetch missing posters
+                    </button>
+                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                      onClick={() => { setShowToolsMenu(false); fetchAllPlatforms(); }}>
+                      📡 Fetch streaming platforms
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:4}}>
@@ -1923,6 +2032,31 @@ function App({ user, onSignOut }) {
               <span key={w.value} className={`filter-chip ${filterWho===w.value?'active':''}`}
                 onClick={() => { setFilterWho(w.value); setDisplayCount(60); }}>{w.emoji}</span>
             ))}
+          </div>
+
+          <div className="filter-divider" />
+
+          {/* Platform / network filter */}
+          <div className="filter-section">
+            <span className="filter-label">Platform</span>
+            <select
+              value={filterNetwork}
+              onChange={e => { setFilterNetwork(e.target.value); setDisplayCount(60); }}
+              style={{
+                background: filterNetwork !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)',
+                color: filterNetwork !== 'all' ? '#000' : 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: 20,
+                padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', outline: 'none',
+              }}>
+              <option value="all">All platforms</option>
+              <optgroup label="Your subscriptions">
+                {MY_SUBS.map(n => <option key={n} value={n}>{n}</option>)}
+              </optgroup>
+              <optgroup label="Other">
+                {NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort().map(n => <option key={n} value={n}>{n}</option>)}
+              </optgroup>
+            </select>
           </div>
 
           <div className="filter-divider" />
