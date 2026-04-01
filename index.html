@@ -833,6 +833,21 @@
     background: repeating-linear-gradient(90deg, var(--accent-gold) 0px, var(--accent-gold) 20px, transparent 20px, transparent 28px);
     opacity: 0.6;
   }
+  /* Inline editing */
+  .editable-cell { cursor: pointer; border-radius: 4px; transition: background 0.15s; }
+  td:hover .editable-cell { background: rgba(245,197,24,0.08); }
+  .editable-cell:hover { background: rgba(245,197,24,0.15) !important; }
+  .inline-select {
+    background: var(--bg-card); border: 1px solid var(--accent-gold);
+    border-radius: 6px; color: var(--text-primary); font-size: 11px;
+    padding: 3px 6px; cursor: pointer; outline: none; max-width: 150px;
+  }
+  .inline-input {
+    background: var(--bg-card); border: 1px solid var(--accent-gold);
+    border-radius: 6px; color: var(--text-primary); font-size: 12px;
+    padding: 3px 6px; outline: none; width: 55px;
+  }
+  .inline-star { cursor: pointer; display: inline-flex; gap: 1px; }
 </style>
 </head>
 <body>
@@ -1520,7 +1535,19 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 }
 
 // ============ DETAIL MODAL ============
-function DetailModal({ item, onClose, onEdit, onDelete }) {
+function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason }) {
+  const [addingNext, setAddingNext] = React.useState(false);
+  const handleAddNextSeason = async () => {
+    setAddingNext(true);
+    try {
+      await onAddNextSeason(item);
+      onClose();
+    } finally {
+      setAddingNext(false);
+    }
+  };
+  const canAddNextSeason = item.type === 'tv' && item.season;
+  const nextSeasonNum = canAddNextSeason ? (parseInt(item.season) || 0) + 1 : null;
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{maxWidth: 550}}>
@@ -1573,8 +1600,11 @@ function DetailModal({ item, onClose, onEdit, onDelete }) {
           </div>
 
           {item.overview && (
-            <div style={{marginTop:12, padding:'10px 14px', background:'var(--bg-card)', borderRadius:8, fontSize:13, color:'var(--text-secondary)', lineHeight:1.5}}>
-              {item.overview}
+            <div style={{marginTop:12, padding:'10px 14px', background:'var(--bg-card)', borderRadius:8}}>
+              <div style={{fontSize:11, fontWeight:600, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6}}>Description</div>
+              <div style={{fontSize:13, color:'var(--text-secondary)', lineHeight:1.6}}>
+                {item.overview}
+              </div>
             </div>
           )}
 
@@ -1582,6 +1612,12 @@ function DetailModal({ item, onClose, onEdit, onDelete }) {
             <button className="btn btn-danger btn-sm" onClick={() => { onDelete(item.id); onClose(); }}>
               🗑 Delete
             </button>
+            {canAddNextSeason && (
+              <button className="btn btn-secondary" onClick={handleAddNextSeason} disabled={addingNext}
+                title={`Add Season ${nextSeasonNum} with status Want to Watch`}>
+                {addingNext ? '⏳' : `➕ Add S${nextSeasonNum}`}
+              </button>
+            )}
             <button className="btn btn-primary" onClick={() => onEdit(item)}>
               ✏️ Edit
             </button>
@@ -1632,23 +1668,94 @@ function ContentCard({ item, onClick }) {
 }
 
 // ============ TABLE ROW ============
-function ContentTableRow({ item, onClick }) {
+// Compact star rating for inline table editing
+function InlineStarRating({ value, onChange }) {
   return (
-    <tr style={{cursor:'pointer'}} onClick={() => onClick(item)}>
-      <td>
+    <div className="inline-star" onClick={e => e.stopPropagation()}>
+      {[1,2,3,4,5].map(i => (
+        <div key={i} style={{position:'relative',width:14,height:14}}>
+          <div style={{position:'absolute',left:0,top:0,width:'50%',height:'100%',zIndex:2}}
+            onClick={() => onChange(i-0.5 === value ? 0 : i-0.5)} />
+          <div style={{position:'absolute',right:0,top:0,width:'50%',height:'100%',zIndex:2}}
+            onClick={() => onChange(i === value ? 0 : i)} />
+          <StarIcon fill={value >= i ? 'full' : value >= i-0.5 ? 'half' : 'empty'} size={14} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate }) {
+  const editing = (field) => inlineEdit?.id === item.id && inlineEdit?.field === field;
+  const startEdit = (e, field) => { e.stopPropagation(); setInlineEdit({ id: item.id, field }); };
+  const save = (field, value) => { onUpdate(item.id, { [field]: value }); setInlineEdit(null); };
+  const cancel = () => setInlineEdit(null);
+  return (
+    <tr style={{cursor:'pointer'}} onClick={() => { if (!inlineEdit) onClick(item); }}>
+      <td onClick={(e) => { e.stopPropagation(); onClick(item); }}>
         <div style={{display:'flex', alignItems:'center'}}>
           {item.posterUrl && <img src={item.posterUrl} className="table-poster-thumb" alt="" loading="lazy" />}
           <span className="table-row-title">{item.title}</span>
         </div>
       </td>
-      <td><span className={`tag ${getStatusTagClass(item.status)}`}>{getStatusLabel(item.status)}</span></td>
-      <td style={{textAlign:'center'}}>{item.priority !== '' && item.priority !== 'n/a' ? item.priority : '—'}</td>
+      {/* Status */}
+      <td onClick={(e) => startEdit(e, 'status')}>
+        {editing('status') ? (
+          <select autoFocus className="inline-select" value={item.status}
+            onChange={e => save('status', e.target.value)}
+            onBlur={cancel} onClick={e => e.stopPropagation()}>
+            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ) : <span className={`tag ${getStatusTagClass(item.status)} editable-cell`}>{getStatusLabel(item.status)}</span>}
+      </td>
+      {/* Priority */}
+      <td style={{textAlign:'center'}} onClick={(e) => startEdit(e, 'priority')}>
+        {editing('priority') ? (
+          <select autoFocus className="inline-select" value={item.priority}
+            onChange={e => save('priority', e.target.value)}
+            onBlur={cancel} onClick={e => e.stopPropagation()}>
+            {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        ) : <span className="editable-cell">{item.priority !== '' && item.priority !== 'n/a' ? item.priority : '—'}</span>}
+      </td>
       <td>{getTypeEmoji(item.type)}</td>
-      <td>{item.season || '—'}</td>
-      <td>{getWhoEmoji(item.who)}</td>
-      <td><span className="card-network">{item.network || '—'}</span></td>
-      <td><StarRating rating={item.rating} size={12} /></td>
-      <td>{item.nonFree ? <span className="tag tag-nonfree">$</span> : ''}</td>
+      {/* Season */}
+      <td onClick={(e) => startEdit(e, 'season')}>
+        {editing('season') ? (
+          <input autoFocus className="inline-input" defaultValue={item.season || ''}
+            onBlur={e => save('season', e.target.value)}
+            onKeyDown={e => { if (e.key==='Enter') save('season', e.target.value); if (e.key==='Escape') cancel(); }}
+            onClick={e => e.stopPropagation()} />
+        ) : <span className="editable-cell">{item.season || '—'}</span>}
+      </td>
+      {/* Who */}
+      <td onClick={(e) => startEdit(e, 'who')}>
+        {editing('who') ? (
+          <select autoFocus className="inline-select" value={item.who}
+            onChange={e => save('who', e.target.value)}
+            onBlur={cancel} onClick={e => e.stopPropagation()}>
+            {WHO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.emoji} {o.label}</option>)}
+          </select>
+        ) : <span className="editable-cell">{getWhoEmoji(item.who)}</span>}
+      </td>
+      {/* Network */}
+      <td onClick={(e) => startEdit(e, 'network')}>
+        {editing('network') ? (
+          <select autoFocus className="inline-select" value={item.network || ''}
+            onChange={e => save('network', e.target.value)}
+            onBlur={cancel} onClick={e => e.stopPropagation()}>
+            <option value="">—</option>
+            {NETWORK_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        ) : <span className="editable-cell card-network">{item.network || '—'}</span>}
+      </td>
+      {/* Rating — always interactive */}
+      <td><InlineStarRating value={item.rating} onChange={val => onUpdate(item.id, {rating: val})} /></td>
+      {/* Non-Free — click to toggle */}
+      <td onClick={(e) => { e.stopPropagation(); onUpdate(item.id, {nonFree: !item.nonFree}); }}
+        style={{cursor:'pointer', textAlign:'center'}}>
+        {item.nonFree ? <span className="tag tag-nonfree">$</span> : <span style={{color:'var(--text-muted)'}}>—</span>}
+      </td>
     </tr>
   );
 }
@@ -1787,6 +1894,7 @@ function App({ user, onSignOut }) {
   const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
   const fetchAllPosters = useCallback(async () => {
     const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
@@ -1929,6 +2037,10 @@ function App({ user, onSignOut }) {
 
   // Group by title for table view
   const tableRows = useMemo(() => {
+    // When text-searching, show every item individually (no collapsing)
+    if (search.trim()) {
+      return filtered.slice(0, displayCount + 200).map(item => ({ _type: 'item', ...item }));
+    }
     const groups = new Map();
     filtered.forEach(item => {
       const key = item.title.toLowerCase().trim();
@@ -1949,12 +2061,22 @@ function App({ user, onSignOut }) {
         const avg = rated.length ? Math.round(rated.reduce((s,i) => s+i.rating,0)/rated.length*2)/2 : 0;
         result.push({ _type: 'group', _key: key, _items: group, _avgRating: avg, ...group[0] });
         if (expandedGroups.has(key)) {
-          group.forEach(i => result.push({ _type: 'child', _groupKey: key, ...i }));
+          const CHILD_STATUS_ORDER = {'watching':0,'watching_airing':1,'watching_gap':2,'want_to_watch':3,'watched':4,'dont_watch':5};
+          const sorted = [...group].sort((a, b) => {
+            const sa = CHILD_STATUS_ORDER[a.status] ?? 99;
+            const sb = CHILD_STATUS_ORDER[b.status] ?? 99;
+            if (sa !== sb) return sa - sb;
+            // Same status → most recently rated first
+            const da = a.ratedDate ? new Date(a.ratedDate) : new Date(0);
+            const db = b.ratedDate ? new Date(b.ratedDate) : new Date(0);
+            return db - da;
+          });
+          sorted.forEach(i => result.push({ _type: 'child', _groupKey: key, ...i }));
         }
       }
     });
     return result.slice(0, displayCount + (expandedGroups.size * 20));
-  }, [filtered, expandedGroups, displayCount]);
+  }, [filtered, expandedGroups, displayCount, search]);
 
   // Stats
   const stats = useMemo(() => {
@@ -1983,6 +2105,28 @@ function App({ user, onSignOut }) {
     const item = items.find(i => i.id === id);
     deleteItem(id);
     showToast(`🗑 "${item?.title}" removed.`);
+  };
+
+  const handleAddNextSeason = async (item) => {
+    const nextSeason = (parseInt(item.season) || 0) + 1;
+    const newItem = {
+      title: item.title,
+      type: item.type,
+      season: String(nextSeason),
+      status: 'want_to_watch',
+      priority: item.priority || '',
+      network: item.network || '',
+      who: item.who || '',
+      nonFree: item.nonFree || false,
+      posterUrl: item.posterUrl || '',
+      tmdbId: item.tmdbId || null,
+      rating: 0,
+      ratedDate: '',
+      releaseDate: '',
+      overview: '',
+    };
+    await addItem(newItem);
+    showToast(`✅ Added ${item.title} S${nextSeason} — want to watch`);
   };
 
   const handleCardClick = (item) => {
@@ -2368,7 +2512,7 @@ function App({ user, onSignOut }) {
                       </tr>
                     );
                   }
-                  return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} />;
+                  return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} />;
                 })}
               </tbody>
             </table>
@@ -2397,7 +2541,8 @@ function App({ user, onSignOut }) {
       {detailItem && (
         <DetailModal item={detailItem} onClose={() => setDetailItem(null)}
           onEdit={(item) => { setDetailItem(null); setEditItem(item); }}
-          onDelete={handleDelete} />
+          onDelete={handleDelete}
+          onAddNextSeason={handleAddNextSeason} />
       )}
 
       {/* Dupes modal */}
