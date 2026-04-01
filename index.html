@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Bo's Content List</title>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -71,6 +71,7 @@
     background: linear-gradient(180deg, #0f0f1a 0%, var(--bg-primary) 100%);
     border-bottom: 1px solid var(--border);
     padding: 16px 24px;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
     position: sticky;
     top: 0;
     z-index: 100;
@@ -747,13 +748,34 @@
   .filter-inner-wrap { display: block; }
   .tools-desktop-only { display: flex; }
 
+  /* Mobile filter dropdown styles */
+  .filter-mobile-dropdowns { display: none; }
+  .filter-mobile-select {
+    appearance: none; -webkit-appearance: none;
+    background: var(--bg-secondary); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; width: 100%;
+    cursor: pointer; outline: none;
+  }
+  .filter-mobile-select.active {
+    background: var(--accent-gold); color: #000; border-color: var(--accent-gold); font-weight: 600;
+  }
+  .filter-mobile-label {
+    font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 4px; font-weight: 600;
+  }
+  .filter-platform-scroll {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .filter-platform-scroll::-webkit-scrollbar { display: none; }
+
   @media (max-width: 768px) {
     .header-inner { flex-direction: column; align-items: stretch; gap: 12px; }
     .search-bar { max-width: 100%; }
     .logo-text { font-size: 22px; }
     .grid-view { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
     .form-grid { grid-template-columns: 1fr; }
-    .filter-inner { flex-wrap: nowrap; overflow-x: auto; }
     .detail-header { flex-direction: column; align-items: center; text-align: center; }
     .detail-poster { width: 120px; min-width: 120px; }
     .content-area { padding: 12px; }
@@ -765,7 +787,8 @@
     .filter-mobile-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; cursor: pointer; }
     .filter-inner-wrap { display: none; }
     .filter-inner-wrap.open { display: block; }
-    .filter-inner { flex-wrap: wrap; }
+    .filter-desktop-chips { display: none !important; }
+    .filter-mobile-dropdowns { display: block; }
     .tools-desktop-only { display: none !important; }
   }
 
@@ -1919,6 +1942,7 @@ function App({ user, onSignOut }) {
   // Fetch tools
   const [posterProgress, setPosterProgress] = useState(null);
   const [platformProgress, setPlatformProgress] = useState(null);
+  const [descProgress, setDescProgress] = useState(null);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -1993,6 +2017,54 @@ function App({ user, onSignOut }) {
     }
     setPlatformProgress(null);
     showToast('📡 Platform data updated!');
+  }, [items]);
+
+  const fetchAllDescriptions = useCallback(async () => {
+    const toFetch = items.filter(i => i.firestoreId && i.title && !i.overview);
+    if (!toFetch.length) { showToast('✅ All items already have descriptions!'); return; }
+    setDescProgress({ done: 0, total: toFetch.length });
+    let done = 0;
+    const batchSize = 4;
+    for (let i = 0; i < toFetch.length; i += batchSize) {
+      const batch = toFetch.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+          let tmdbId = item.tmdbId;
+          // Search for tmdbId if we don't have it
+          if (!tmdbId) {
+            const res = await fetch(`https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}`);
+            const data = await res.json();
+            tmdbId = data.results?.[0]?.id;
+          }
+          if (tmdbId) {
+            let overview = '';
+            if (item.type === 'tv' && item.season) {
+              // Try season-specific overview first
+              const sRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${item.season}?api_key=${TMDB_API_KEY}`);
+              const sData = await sRes.json();
+              overview = sData.overview || '';
+            }
+            if (!overview) {
+              // Fall back to show/movie level overview
+              const mRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`);
+              const mData = await mRes.json();
+              overview = mData.overview || '';
+            }
+            if (overview) {
+              const updates = { overview };
+              if (!item.tmdbId && tmdbId) updates.tmdbId = tmdbId;
+              await db.collection('content').doc(item.firestoreId).update(updates);
+            }
+          }
+        } catch(e) {}
+        done++;
+        setDescProgress({ done, total: toFetch.length });
+      }));
+      if (i + batchSize < toFetch.length) await new Promise(r => setTimeout(r, 600));
+    }
+    setDescProgress(null);
+    showToast('📖 Descriptions fetched!');
   }, [items]);
 
   // Toast helper — showToast(msg) or showToast(msg, { onUndo: fn, duration: ms })
@@ -2225,21 +2297,21 @@ function App({ user, onSignOut }) {
             {/* Tools dropdown */}
             {TMDB_API_KEY && (
               <div className="tools-desktop-only" style={{position:'relative'}}>
-                {(posterProgress || platformProgress) ? (
+                {(posterProgress || platformProgress || descProgress) ? (
                   <div style={{
                     display:'flex', alignItems:'center', gap:8,
                     background:'var(--bg-card)', border:'1px solid var(--border)',
                     borderRadius:8, padding:'6px 14px', fontSize:13
                   }}>
-                    <span>{posterProgress ? '🎨' : '📡'}</span>
+                    <span>{posterProgress ? '🎨' : descProgress ? '📖' : '📡'}</span>
                     <div style={{width:80, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
                       <div style={{
-                        width: `${((posterProgress||platformProgress).done/(posterProgress||platformProgress).total*100).toFixed(0)}%`,
+                        width: `${((posterProgress||platformProgress||descProgress).done/(posterProgress||platformProgress||descProgress).total*100).toFixed(0)}%`,
                         height:'100%', background:'var(--accent-gold)', borderRadius:3, transition:'width 0.3s'
                       }}/>
                     </div>
                     <span style={{color:'var(--text-muted)', fontSize:11}}>
-                      {(posterProgress||platformProgress).done}/{(posterProgress||platformProgress).total}
+                      {(posterProgress||platformProgress||descProgress).done}/{(posterProgress||platformProgress||descProgress).total}
                     </span>
                   </div>
                 ) : (
@@ -2248,7 +2320,7 @@ function App({ user, onSignOut }) {
                     🛠 Tools ▾
                   </button>
                 )}
-                {showToolsMenu && !posterProgress && !platformProgress && (
+                {showToolsMenu && !posterProgress && !platformProgress && !descProgress && (
                   <div style={{
                     position:'absolute', top:'calc(100% + 6px)', right:0,
                     background:'var(--bg-card)', border:'1px solid var(--border)',
@@ -2262,9 +2334,13 @@ function App({ user, onSignOut }) {
                       onClick={() => { setShowToolsMenu(false); fetchAllPosters(); }}>
                       🎨 Fetch missing posters
                     </button>
-                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
                       onClick={() => { setShowToolsMenu(false); fetchAllPlatforms(); }}>
                       📡 Fetch streaming platforms
+                    </button>
+                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                      onClick={() => { setShowToolsMenu(false); fetchAllDescriptions(); }}>
+                      📖 Fetch missing descriptions
                     </button>
                     <div style={{height:1,background:'var(--border)',margin:'4px 0'}}/>
                     <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
@@ -2328,128 +2404,142 @@ function App({ user, onSignOut }) {
           <span style={{color:'var(--text-muted)', fontSize:12}}>{filtersOpen ? '▲ Hide' : '▼ Show'}</span>
         </div>
         <div className={`filter-inner-wrap ${filtersOpen ? 'open' : ''}`}>
-        <div className="filter-inner">
-          {/* Status filter */}
-          <div className="filter-section">
-            <span className="filter-label">Status</span>
-            {[{v:'all',l:'All'},{v:'unwatched',l:'📋 Unwatched'},{v:'watched',l:'✅ Watched'},
-              {v:'watching',l:'👀👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
-            ].map(f => (
-              <span key={f.v} className={`filter-chip ${filterStatus===f.v?'active':''}`}
-                onClick={() => { setFilterStatus(f.v); setDisplayCount(60); }}>{f.l}</span>
-            ))}
-          </div>
-
-          <div className="filter-divider" />
-
-          {/* Type filter */}
-          <div className="filter-section">
-            <span className="filter-label">Type</span>
-            <span className={`filter-chip ${filterType==='all'?'active':''}`}
-              onClick={() => { setFilterType('all'); setDisplayCount(60); }}>All</span>
-            {TYPE_OPTIONS.map(t => (
-              <span key={t.value} className={`filter-chip ${filterType===t.value?'active':''}`}
-                onClick={() => { setFilterType(t.value); setDisplayCount(60); }}>{t.emoji}</span>
-            ))}
-          </div>
-
-          <div className="filter-divider" />
-
-          {/* Who filter */}
-          <div className="filter-section">
-            <span className="filter-label">Who</span>
-            <span className={`filter-chip ${filterWho==='all'?'active':''}`}
-              onClick={() => { setFilterWho('all'); setDisplayCount(60); }}>All</span>
-            {WHO_OPTIONS.map(w => (
-              <span key={w.value} className={`filter-chip ${filterWho===w.value?'active':''}`}
-                onClick={() => { setFilterWho(w.value); setDisplayCount(60); }}>{w.emoji}</span>
-            ))}
-          </div>
-
-          <div className="filter-divider" />
-
-          {/* Platform / network filter */}
-          <div className="filter-section">
-            <span className="filter-label">Platform</span>
-            {[...MY_SUBS, ...NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort()].map(n => (
-              <span key={n}
-                className={`filter-chip ${filterNetworks.includes(n) ? 'active' : ''}`}
-                onClick={() => {
-                  setFilterNetworks(prev =>
-                    prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n]
-                  );
-                  setDisplayCount(60);
-                }}>
-                {n}
-              </span>
-            ))}
-          </div>
-
-          <div className="filter-divider" />
-
-          {/* Rating filter */}
-          <div className="filter-section">
-            <span className="filter-label">Rating</span>
-            <select
-              value={filterRating}
-              onChange={e => {
-                setFilterRating(e.target.value);
-                setDisplayCount(60);
-                if (e.target.value !== 'all') setFilterStatus('watched');
-              }}
-              style={{
-                background: filterRating !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)',
-                color: filterRating !== 'all' ? '#000' : 'var(--text-secondary)',
-                border: '1px solid var(--border)',
-                borderRadius: 20,
-                padding: '5px 12px',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-                outline: 'none',
-              }}>
-              <option value="all">All ratings</option>
-              {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5].map(r => (
-                <option key={r} value={String(r)}>
-                  {r % 1 === 0 ? '★'.repeat(r) : '★'.repeat(Math.floor(r)) + '½'} ({r})
-                </option>
+          {/* ── DESKTOP: chip layout ── */}
+          <div className="filter-inner filter-desktop-chips">
+            <div className="filter-section">
+              <span className="filter-label">Status</span>
+              {[{v:'all',l:'All'},{v:'unwatched',l:'📋 Unwatched'},{v:'watched',l:'✅ Watched'},
+                {v:'watching',l:'👀👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
+              ].map(f => (
+                <span key={f.v} className={`filter-chip ${filterStatus===f.v?'active':''}`}
+                  onClick={() => { setFilterStatus(f.v); setDisplayCount(60); }}>{f.l}</span>
               ))}
-            </select>
-          </div>
-
-          <div className="filter-divider" />
-
-          {/* Sort */}
-          <div className="filter-section">
-            <span className="filter-label">Sort</span>
-            {[{v:'status',l:'Status'},{v:'title',l:'A-Z'},{v:'priority',l:'Priority'},{v:'rating',l:'Rating'},{v:'ratedDate',l:'Recent'}].map(s => (
-              <span key={s.v} className={`filter-chip ${sortBy===s.v?'active':''}`}
-                onClick={() => handleSort(s.v)}>{s.l} {sortBy===s.v && (sortDir==='asc'?'↑':'↓')}</span>
-            ))}
-          </div>
-
-          {/* Clear filters */}
-          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
+            </div>
             <div className="filter-divider" />
-          )}
-          {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
-            <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350', whiteSpace:'nowrap'}}
-              onClick={() => {
-                setFilterStatus('unwatched');
-                setFilterType('all');
-                setFilterWho('all');
-                setFilterNetworks([]);
-                setFilterRating('all');
-                setSortBy('status');
-                setSortDir('asc');
-                setSearch('');
-                setDisplayCount(60);
-              }}>
-              ✕ Clear filters
-            </span>
-          )}
+            <div className="filter-section">
+              <span className="filter-label">Type</span>
+              <span className={`filter-chip ${filterType==='all'?'active':''}`}
+                onClick={() => { setFilterType('all'); setDisplayCount(60); }}>All</span>
+              {TYPE_OPTIONS.map(t => (
+                <span key={t.value} className={`filter-chip ${filterType===t.value?'active':''}`}
+                  onClick={() => { setFilterType(t.value); setDisplayCount(60); }}>{t.emoji}</span>
+              ))}
+            </div>
+            <div className="filter-divider" />
+            <div className="filter-section">
+              <span className="filter-label">Who</span>
+              <span className={`filter-chip ${filterWho==='all'?'active':''}`}
+                onClick={() => { setFilterWho('all'); setDisplayCount(60); }}>All</span>
+              {WHO_OPTIONS.map(w => (
+                <span key={w.value} className={`filter-chip ${filterWho===w.value?'active':''}`}
+                  onClick={() => { setFilterWho(w.value); setDisplayCount(60); }}>{w.emoji}</span>
+              ))}
+            </div>
+            <div className="filter-divider" />
+            <div className="filter-section">
+              <span className="filter-label">Platform</span>
+              {[...MY_SUBS, ...NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort()].map(n => (
+                <span key={n} className={`filter-chip ${filterNetworks.includes(n) ? 'active' : ''}`}
+                  onClick={() => { setFilterNetworks(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n]); setDisplayCount(60); }}>
+                  {n}
+                </span>
+              ))}
+            </div>
+            <div className="filter-divider" />
+            <div className="filter-section">
+              <span className="filter-label">Rating</span>
+              <select value={filterRating} onChange={e => { setFilterRating(e.target.value); setDisplayCount(60); if (e.target.value !== 'all') setFilterStatus('watched'); }}
+                style={{background: filterRating !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)', color: filterRating !== 'all' ? '#000' : 'var(--text-secondary)', border:'1px solid var(--border)', borderRadius:20, padding:'5px 12px', fontSize:12, fontWeight:600, cursor:'pointer', outline:'none'}}>
+                <option value="all">All ratings</option>
+                {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'} ({r})</option>)}
+              </select>
+            </div>
+            <div className="filter-divider" />
+            <div className="filter-section">
+              <span className="filter-label">Sort</span>
+              {[{v:'status',l:'Status'},{v:'title',l:'A-Z'},{v:'priority',l:'Priority'},{v:'rating',l:'Rating'},{v:'ratedDate',l:'Recent'}].map(s => (
+                <span key={s.v} className={`filter-chip ${sortBy===s.v?'active':''}`}
+                  onClick={() => handleSort(s.v)}>{s.l} {sortBy===s.v && (sortDir==='asc'?'↑':'↓')}</span>
+              ))}
+            </div>
+            {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
+              <><div className="filter-divider" />
+              <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350',whiteSpace:'nowrap'}}
+                onClick={() => { setFilterStatus('unwatched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
+                ✕ Clear filters
+              </span></>
+            )}
+          </div>
+
+          {/* ── MOBILE: dropdown layout ── */}
+          <div className="filter-mobile-dropdowns" style={{padding:'8px 0'}}>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8}}>
+              <div>
+                <div className="filter-mobile-label">Status</div>
+                <select className={`filter-mobile-select ${filterStatus!=='unwatched'?'active':''}`} value={filterStatus}
+                  onChange={e => { setFilterStatus(e.target.value); setDisplayCount(60); }}>
+                  {[{v:'unwatched',l:'📋 Unwatched'},{v:'all',l:'All'},{v:'watched',l:'✅ Watched'},
+                    {v:'watching',l:'👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
+                  ].map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="filter-mobile-label">Type</div>
+                <select className={`filter-mobile-select ${filterType!=='all'?'active':''}`} value={filterType}
+                  onChange={e => { setFilterType(e.target.value); setDisplayCount(60); }}>
+                  <option value="all">All types</option>
+                  {TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="filter-mobile-label">Who</div>
+                <select className={`filter-mobile-select ${filterWho!=='all'?'active':''}`} value={filterWho}
+                  onChange={e => { setFilterWho(e.target.value); setDisplayCount(60); }}>
+                  <option value="all">Everyone</option>
+                  {WHO_OPTIONS.map(w => <option key={w.value} value={w.value}>{w.emoji} {w.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="filter-mobile-label">Rating</div>
+                <select className={`filter-mobile-select ${filterRating!=='all'?'active':''}`} value={filterRating}
+                  onChange={e => { setFilterRating(e.target.value); setDisplayCount(60); if (e.target.value !== 'all') setFilterStatus('watched'); }}>
+                  <option value="all">All ratings</option>
+                  {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'} ({r})</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="filter-mobile-label">Sort by</div>
+                <select className="filter-mobile-select active" value={sortBy}
+                  onChange={e => { setSortBy(e.target.value); setDisplayCount(60); }}>
+                  {[{v:'status',l:'Status'},{v:'title',l:'A–Z'},{v:'priority',l:'Priority'},{v:'rating',l:'Rating'},{v:'ratedDate',l:'Recently rated'}].map(s => (
+                    <option key={s.v} value={s.v}>{s.l}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{display:'flex',alignItems:'flex-end'}}>
+                {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
+                  <button className="filter-mobile-select" style={{background:'rgba(239,83,80,0.1)',color:'#ef5350',border:'1px solid #ef5350',fontWeight:600,cursor:'pointer'}}
+                    onClick={() => { setFilterStatus('unwatched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
+                    ✕ Clear filters
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* Platform — always chips in a scrolling row */}
+            <div>
+              <div className="filter-mobile-label">Platform {filterNetworks.length > 0 && <span style={{color:'var(--accent-gold)'}}>({filterNetworks.length} selected)</span>}</div>
+              <div className="filter-platform-scroll">
+                {[...MY_SUBS, ...NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).sort()].map(n => (
+                  <span key={n} className={`filter-chip ${filterNetworks.includes(n)?'active':''}`}
+                    style={{flexShrink:0, fontSize:12, padding:'4px 10px'}}
+                    onClick={() => { setFilterNetworks(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n]); setDisplayCount(60); }}>
+                    {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
       </div>{/* filter-bar */}
 
       {/* Content */}
@@ -2526,26 +2616,7 @@ function App({ user, onSignOut }) {
                     );
                   }
                   if (row._type === 'child') {
-                    return (
-                      <tr key={`${row.id}-${row.season}-child`} style={{background:'rgba(0,0,0,0.15)',cursor:'pointer'}}
-                        onClick={() => handleCardClick(row)}>
-                        <td>
-                          <div style={{display:'flex',alignItems:'center',gap:6,paddingLeft:16}}>
-                            {row.posterUrl ? <img src={row.posterUrl} className='table-poster-thumb' alt='' loading='lazy' /> : <div style={{width:20,flexShrink:0}}/>}
-                            <span style={{color:'var(--text-muted)',fontSize:11}}>└</span>
-                            <span style={{fontSize:13,marginLeft:4}}>Season {row.season || '?'}</span>
-                          </div>
-                        </td>
-                        <td><span className={`tag ${getStatusTagClass(row.status)}`}>{getStatusLabel(row.status)}</span></td>
-                        <td style={{textAlign:'center'}}>{row.priority || '—'}</td>
-                        <td></td>
-                        <td style={{fontSize:12}}>{row.season}</td>
-                        <td>{getWhoEmoji(row.who)}</td>
-                        <td><span className="card-network">{row.network || '—'}</span></td>
-                        <td><StarRating rating={row.rating} size={12}/></td>
-                        <td>{row.nonFree ? <span className="tag tag-nonfree">$</span> : ''}</td>
-                      </tr>
-                    );
+                    return <ContentTableRow key={`${row.id}-${row.season}-child`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} />;
                   }
                   return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} />;
                 })}
