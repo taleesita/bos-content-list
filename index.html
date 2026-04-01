@@ -2382,11 +2382,11 @@ function App({ user, onSignOut }) {
       {/* Stats */}
       <div className="stats-bar">
         <div className="stats-inner">
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setSortBy('rating'); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('rating'); setSortDir('desc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
           <div className="stat"><span className="stat-num">{stats.avgRating}</span> avg ⭐</div>
           <div className="stat" style={{marginLeft:'auto', color:'var(--text-muted)', fontSize: 11}}>
             Showing {Math.min(displayCount, filtered.length)} of {filtered.length}
