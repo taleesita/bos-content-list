@@ -2488,7 +2488,7 @@ function App({ user, onSignOut }) {
                 <select className={`filter-mobile-select ${filterType!=='all'?'active':''}`} value={filterType}
                   onChange={e => { setFilterType(e.target.value); setDisplayCount(60); }}>
                   <option value="all">All types</option>
-                  {TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>)}
+                  {TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div>
@@ -2496,7 +2496,7 @@ function App({ user, onSignOut }) {
                 <select className={`filter-mobile-select ${filterWho!=='all'?'active':''}`} value={filterWho}
                   onChange={e => { setFilterWho(e.target.value); setDisplayCount(60); }}>
                   <option value="all">Everyone</option>
-                  {WHO_OPTIONS.map(w => <option key={w.value} value={w.value}>{w.emoji} {w.label}</option>)}
+                  {WHO_OPTIONS.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
                 </select>
               </div>
               <div>
