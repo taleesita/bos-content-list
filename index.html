@@ -2212,6 +2212,7 @@ function App({ user, onSignOut }) {
       if (!tvByTitle[key]) tvByTitle[key] = {
         title: i.title, tmdbId: i.tmdbId || null,
         posterUrl: i.posterUrl || '', seasons: new Set(), maxRating: 0, network: '',
+        isWatched: false, isWatching: false,
       };
       if (i.tmdbId && !tvByTitle[key].tmdbId) tvByTitle[key].tmdbId = i.tmdbId;
       if (i.posterUrl && !tvByTitle[key].posterUrl) tvByTitle[key].posterUrl = i.posterUrl;
@@ -2219,14 +2220,22 @@ function App({ user, onSignOut }) {
       tvByTitle[key].seasons.add(parseInt(i.season) || 0);
       if (i.rating > tvByTitle[key].maxRating) tvByTitle[key].maxRating = i.rating;
       if ((i.ratedDate || '') > (tvByTitle[key].lastRatedDate || '')) tvByTitle[key].lastRatedDate = i.ratedDate || '';
+      if (i.status === 'watched') tvByTitle[key].isWatched = true;
+      if (i.status === 'watching') tvByTitle[key].isWatching = true;
     });
 
     // Only check shows with at least 1 real season tracked (season > 0)
-    // Sort by most recently rated / highest rated first so important shows get checked first
+    // Sort: watching first > watched > other; then by rating; then recency
     const tvShows = Object.values(tvByTitle)
       .filter(s => [...s.seasons].some(n => n > 0))
-      .sort((a, b) => (b.maxRating || 0) - (a.maxRating || 0))
-      .slice(0, 200); // check up to 200 shows
+      .sort((a, b) => {
+        const aStatus = a.isWatching ? 2 : a.isWatched ? 1 : 0;
+        const bStatus = b.isWatching ? 2 : b.isWatched ? 1 : 0;
+        if (bStatus !== aStatus) return bStatus - aStatus;
+        if ((b.maxRating || 0) !== (a.maxRating || 0)) return (b.maxRating || 0) - (a.maxRating || 0);
+        return (b.lastRatedDate || '').localeCompare(a.lastRatedDate || '');
+      })
+      .slice(0, 300); // check up to 300 shows
 
     // Fetch in small parallel batches
     const upcomingBatch = 8;
@@ -2381,6 +2390,7 @@ function App({ user, onSignOut }) {
             const airDate = new Date(r.first_air_date || airFrom);
             const daysAgo = Math.round((now - airDate) / 86400000);
             const daysUntil = -daysAgo;
+            const simMatch = recMap.get(rId);
             newOnPlatform.push({
               key: `new_${rId}`,
               type: 'new',
@@ -2392,6 +2402,7 @@ function App({ user, onSignOut }) {
               reason: daysUntil >= 0
                 ? `Out ${new Date(r.first_air_date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
                 : `Premiered ${Math.abs(daysUntil)}d ago`,
+              because: simMatch ? `Because you liked ${simMatch.topSeed.title}` : null,
             });
           });
         } catch(e) {}
