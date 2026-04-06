@@ -1888,6 +1888,25 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate })
       </td>
       {/* Rating — always interactive */}
       <td><InlineStarRating value={item.rating} onChange={val => onUpdate(item.id, {rating: val})} /></td>
+      {/* Release Date */}
+      <td onClick={(e) => startEdit(e, 'releaseDate')}>
+        {editing('releaseDate') ? (
+          <input autoFocus className="inline-input" type="date"
+            defaultValue={item.releaseDate ? item.releaseDate.split('T')[0] : ''}
+            onBlur={e => save('releaseDate', e.target.value)}
+            onKeyDown={e => { if (e.key==='Enter') save('releaseDate', e.target.value); if (e.key==='Escape') cancel(); }}
+            onClick={e => e.stopPropagation()} />
+        ) : (
+          <span className="editable-cell" style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>
+            {item.releaseDate ? (() => {
+              const s = item.releaseDate;
+              if (s.includes('-')) { const p = s.split('T')[0].split('-'); if (p.length >= 3) { const y = parseInt(p[0]), m = parseInt(p[1]), d = parseInt(p[2]); if (!isNaN(y) && !isNaN(m) && !isNaN(d)) return `${m}/${d}/${y}`; } }
+              if (s.includes('/')) { const p = s.split('/'); const m = parseInt(p[0]), d = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(m) && !isNaN(d) && !isNaN(y)) return `${m}/${d}/${y}`; }
+              return s;
+            })() : ''}
+          </span>
+        )}
+      </td>
       {/* Rated Date */}
       <td onClick={(e) => startEdit(e, 'ratedDate')}>
         {editing('ratedDate') ? (
@@ -2524,6 +2543,11 @@ function App({ user, onSignOut }) {
         const db = b.ratedDate ? new Date(b.ratedDate) : new Date(0);
         cmp = db - da;
       }
+      else if (sortBy === 'releaseDate') {
+        const da = a.releaseDate ? new Date(a.releaseDate) : new Date(0);
+        const db = b.releaseDate ? new Date(b.releaseDate) : new Date(0);
+        cmp = db - da;
+      }
       else if (sortBy === 'network') cmp = (a.network || '').localeCompare(b.network || '');
       return sortDir === 'asc' ? cmp : -cmp;
     });
@@ -2866,16 +2890,23 @@ function App({ user, onSignOut }) {
                           </div>
                           <div className="rec-card-body">
                             <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
-                            {rec.type !== 'similar' && <div className="rec-card-reason">{rec.reason}</div>}
-                            {rec.because && <div style={{fontSize:9,color:'var(--text-muted)',lineHeight:1.3,marginBottom:6,fontStyle:'italic'}}>{rec.because}</div>}
+                            {rec.type === 'similar' ? (
+                              <div className="rec-card-reason">{rec.because || rec.reason}</div>
+                            ) : (
+                              <>
+                                <div className="rec-card-reason">{rec.reason}</div>
+                                {rec.because && <div style={{fontSize:9,color:'var(--text-muted)',lineHeight:1.3,marginBottom:4,fontStyle:'italic'}}>{rec.because}</div>}
+                              </>
+                            )}
                             <div className="rec-card-actions">
                               <button className="rec-add-btn" onClick={() => {
+                                const priorEntry = items.find(i => i.title.toLowerCase().trim() === rec.title.toLowerCase().trim());
                                 setShowForm({
                                   title: rec.title,
                                   type: rec.mediaType === 'movie' ? 'movie' : 'tv',
                                   season: rec.season ? String(rec.season) : '',
                                   status: 'want_to_watch', priority: '1',
-                                  network: rec.platform || '', who: 'together',
+                                  network: rec.platform || priorEntry?.network || '', who: priorEntry?.who || 'together',
                                   nonFree: false, posterUrl: rec.posterUrl || '',
                                   tmdbId: rec.tmdbId || null, rating: 0,
                                   ratedDate: '', releaseDate: rec.airDate || '',
@@ -3090,6 +3121,7 @@ function App({ user, onSignOut }) {
                   <th>Who</th>
                   <th onClick={() => handleSort('network')}>Network <SortArrow field="network" /></th>
                   <th onClick={() => handleSort('rating')}>Rating <SortArrow field="rating" /></th>
+                  <th onClick={() => handleSort('releaseDate')}>Release <SortArrow field="releaseDate" /></th>
                   <th onClick={() => handleSort('ratedDate')}>Rated <SortArrow field="ratedDate" /></th>
                   <th>Non-Free</th>
                 </tr>
