@@ -1379,9 +1379,9 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 
   const set = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-  // On edit open, if TV show with existing tmdbId, pre-load seasons
+  // On open, if TV show with a tmdbId (edit OR add-with-prefill), pre-load seasons
   useEffect(() => {
-    if (isEdit && item?.tmdbId && item?.type !== 'movie') {
+    if (item?.tmdbId && item?.type !== 'movie') {
       setLoadingSeasons(true);
       fetch(`https://api.themoviedb.org/3/tv/${item.tmdbId}?api_key=${TMDB_API_KEY}`)
         .then(r => r.json())
@@ -2921,7 +2921,7 @@ function App({ user, onSignOut }) {
                                 });
                                 dismissRec(rec.key);
                               }}>+ Add</button>
-                              <button className="rec-dismiss-btn" title="Dismiss for now (comes back next refresh)" onClick={() => snoozeRec(rec.key)}>later</button>
+                              <button className="rec-dismiss-btn" title="Remind me later" onClick={() => snoozeRec(rec.key)}>🕐</button>
                               <button className="rec-dismiss-btn" title="Never show again" onClick={() => dismissRec(rec.key)}>✕</button>
                             </div>
                           </div>
