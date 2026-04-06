@@ -1861,6 +1861,20 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate })
       </td>
       {/* Rating — always interactive */}
       <td><InlineStarRating value={item.rating} onChange={val => onUpdate(item.id, {rating: val})} /></td>
+      {/* Rated Date */}
+      <td onClick={(e) => startEdit(e, 'ratedDate')}>
+        {editing('ratedDate') ? (
+          <input autoFocus className="inline-input" type="date"
+            defaultValue={item.ratedDate ? (() => { try { const d = new Date(item.ratedDate); return d.toISOString().slice(0,10); } catch { return ''; } })() : ''}
+            onBlur={e => save('ratedDate', e.target.value)}
+            onKeyDown={e => { if (e.key==='Enter') save('ratedDate', e.target.value); if (e.key==='Escape') cancel(); }}
+            onClick={e => e.stopPropagation()} />
+        ) : (
+          <span className="editable-cell" style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>
+            {item.ratedDate ? (() => { try { const d = new Date(item.ratedDate); return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}); } catch { return item.ratedDate; } })() : '—'}
+          </span>
+        )}
+      </td>
       {/* Non-Free — click to toggle */}
       <td onClick={(e) => { e.stopPropagation(); onUpdate(item.id, {nonFree: !item.nonFree}); }}
         style={{cursor:'pointer', textAlign:'center'}}>
@@ -2008,6 +2022,7 @@ function App({ user, onSignOut }) {
   const [showRecs, setShowRecs] = useState(false);
   const [recs, setRecs] = useState(null); // null=not fetched, []|[...]=fetched
   const [recsLoading, setRecsLoading] = useState(false);
+  const [recsVisible, setRecsVisible] = useState(10);
   const [dismissedRecs, setDismissedRecs] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
   });
@@ -2232,9 +2247,9 @@ function App({ user, onSignOut }) {
     // ── 2. SIMILAR CONTENT ───────────────────────────────────────────────
     // Seed from 4★+ rated items; dedupe aggressively
     const seeds = [...items]
-      .filter(i => i.rating >= 4 && i.tmdbId)
+      .filter(i => i.rating >= 3.5 && i.tmdbId)
       .sort((a, b) => b.rating - a.rating || (b.ratedDate||'').localeCompare(a.ratedDate||''))
-      .slice(0, 12);
+      .slice(0, 20);
 
     // Score map: tmdbId → { rec, score, reasons[] }
     const recMap = new Map();
@@ -2254,31 +2269,35 @@ function App({ user, onSignOut }) {
           if (existingTmdbIds.has(rId)) return;
           if (existingTitles.has(rTitle.toLowerCase())) return;
           if (!r.poster_path) return;
+          // Filter non-English content not already in the user's list
+          if (r.original_language && r.original_language !== 'en') {
+            if (!existingTitles.has(rTitle.toLowerCase())) return;
+          }
           if (!recMap.has(rId)) {
             recMap.set(rId, {
               key: `similar_${rId}`, type: 'similar',
               title: rTitle, tmdbId: r.id, mediaType: mt,
               posterUrl: TMDB_IMG_BASE + r.poster_path,
-              overview: r.overview || '',
+              overview: r.overview || '', platform: null,
               score: 0, topSeed: seed, topRating: seed.rating,
             });
           }
           const entry = recMap.get(rId);
-          entry.score += seed.rating; // higher score = recommended by more / higher rated seeds
+          entry.score += seed.rating;
           if (seed.rating > entry.topRating) { entry.topSeed = seed; entry.topRating = seed.rating; }
         });
       } catch(e) {}
     }));
 
-    // Top 15 by score, deduplicated
+    // Top 20 by score, deduplicated
     const similar = [...recMap.values()]
       .sort((a, b) => b.score - a.score)
-      .slice(0, 15)
+      .slice(0, 20)
       .map(e => ({ ...e, reason: `Because you liked ${e.topSeed.title}` }));
 
     results.push(...similar);
 
-    // Sort: upcoming soonest first, then similar by score
+    // Initial sort: upcoming soonest, then similar by score
     results.sort((a, b) => {
       if (a.type === 'upcoming' && b.type !== 'upcoming') return -1;
       if (b.type === 'upcoming' && a.type !== 'upcoming') return 1;
@@ -2286,7 +2305,34 @@ function App({ user, onSignOut }) {
       return (b.score || 0) - (a.score || 0);
     });
 
-    setRecs(results);
+    // Publish initial results so user sees something while we fetch platforms
+    setRecs([...results]);
+
+    // ── 3. PLATFORM ENRICHMENT (second pass) ────────────────────────────
+    // Fetch watch providers for similar recs, then re-sort to put MY_SUBS first
+    const platformBatch = 6;
+    const simResults = results.filter(r => r.type === 'similar');
+    for (let i = 0; i < simResults.length; i += platformBatch) {
+      await Promise.all(simResults.slice(i, i + platformBatch).map(async (rec) => {
+        try {
+          const p = await fetchProviders(rec.tmdbId, rec.mediaType === 'movie' ? 'movie' : 'tv');
+          rec.platform = p || null;
+        } catch(e) {}
+      }));
+    }
+
+    // Re-sort: upcoming first, then MY_SUBS similar, then the rest
+    results.sort((a, b) => {
+      if (a.type === 'upcoming' && b.type !== 'upcoming') return -1;
+      if (b.type === 'upcoming' && a.type !== 'upcoming') return 1;
+      if (a.type === 'upcoming') return (a.daysUntil ?? 999) - (b.daysUntil ?? 999);
+      const aOnSub = MY_SUBS.includes(a.platform) ? 1 : 0;
+      const bOnSub = MY_SUBS.includes(b.platform) ? 1 : 0;
+      if (aOnSub !== bOnSub) return bOnSub - aOnSub;
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    setRecs([...results]);
     setRecsLoading(false);
   }, [items]);
 
@@ -2639,8 +2685,9 @@ function App({ user, onSignOut }) {
             </span>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
               {showRecs && recs !== null && !recsLoading && (
-                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)'}}
-                  onClick={(e) => { e.stopPropagation(); setRecs(null); fetchRecs(); }}>
+                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
+                  title="Re-fetches TMDB for new upcoming seasons & fresh recommendations"
+                  onClick={(e) => { e.stopPropagation(); setRecs(null); setRecsVisible(10); fetchRecs(); }}>
                   🔄 Refresh
                 </span>
               )}
@@ -2656,52 +2703,67 @@ function App({ user, onSignOut }) {
                   Checking TMDB for upcoming seasons &amp; recommendations…
                 </div>
               )}
-              {!recsLoading && recs !== null && (() => {
+              {recs !== null && (() => {
                 const visible = recs.filter(r => !dismissedRecs.has(r.key));
-                if (!visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
-                return (
+                if (!recsLoading && !visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
+                const page = visible.slice(0, recsVisible);
+                const hasMore = visible.length > recsVisible;
+                return (<>
                   <div className="recs-scroll">
-                    {visible.map(rec => (
-                      <div key={rec.key} className="rec-card">
-                        <div className="rec-card-poster">
-                          {rec.posterUrl
-                            ? <img src={rec.posterUrl} alt={rec.title} loading="lazy" />
-                            : <span style={{fontSize:32,opacity:0.3}}>{rec.mediaType === 'movie' ? '🎥' : '📺'}</span>
-                          }
-                          <span className={`rec-card-badge ${rec.type === 'upcoming' ? 'rec-badge-upcoming' : 'rec-badge-similar'}`}>
-                            {rec.type === 'upcoming' ? '📅 NEW SEASON' : '✨ FOR YOU'}
-                          </span>
-                        </div>
-                        <div className="rec-card-body">
-                          <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
-                          <div className="rec-card-reason">{rec.reason}</div>
-                          <div className="rec-card-actions">
-                            <button className="rec-add-btn" onClick={() => {
-                              setShowForm({
-                                title: rec.title,
-                                type: rec.mediaType === 'movie' ? 'movie' : 'tv',
-                                season: rec.season ? String(rec.season) : '',
-                                status: 'want_to_watch',
-                                priority: '1',
-                                network: '',
-                                who: 'together',
-                                nonFree: false,
-                                posterUrl: rec.posterUrl || '',
-                                tmdbId: rec.tmdbId || null,
-                                rating: 0,
-                                ratedDate: '',
-                                releaseDate: rec.airDate || '',
-                                overview: rec.overview || '',
-                              });
-                              dismissRec(rec.key);
-                            }}>+ Add</button>
-                            <button className="rec-dismiss-btn" onClick={() => dismissRec(rec.key)}>✕</button>
+                    {page.map(rec => {
+                      const onMySub = MY_SUBS.includes(rec.platform);
+                      return (
+                        <div key={rec.key} className="rec-card">
+                          <div className="rec-card-poster">
+                            {rec.posterUrl
+                              ? <img src={rec.posterUrl} alt={rec.title} loading="lazy" />
+                              : <span style={{fontSize:32,opacity:0.3}}>{rec.mediaType === 'movie' ? '🎥' : '📺'}</span>
+                            }
+                            <span className={`rec-card-badge ${rec.type === 'upcoming' ? 'rec-badge-upcoming' : 'rec-badge-similar'}`}>
+                              {rec.type === 'upcoming' ? '📅 NEW SEASON' : '✨ FOR YOU'}
+                            </span>
+                            {rec.platform && (
+                              <span style={{position:'absolute',bottom:5,left:5,fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:4,
+                                background: onMySub ? 'rgba(102,187,106,0.9)' : 'rgba(0,0,0,0.7)',
+                                color: onMySub ? '#000' : '#aaa', backdropFilter:'blur(4px)'}}>
+                                {rec.platform}
+                              </span>
+                            )}
+                          </div>
+                          <div className="rec-card-body">
+                            <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
+                            <div className="rec-card-reason">{rec.reason}</div>
+                            <div className="rec-card-actions">
+                              <button className="rec-add-btn" onClick={() => {
+                                setShowForm({
+                                  title: rec.title,
+                                  type: rec.mediaType === 'movie' ? 'movie' : 'tv',
+                                  season: rec.season ? String(rec.season) : '',
+                                  status: 'want_to_watch', priority: '1',
+                                  network: rec.platform || '', who: 'together',
+                                  nonFree: false, posterUrl: rec.posterUrl || '',
+                                  tmdbId: rec.tmdbId || null, rating: 0,
+                                  ratedDate: '', releaseDate: rec.airDate || '',
+                                  overview: rec.overview || '',
+                                });
+                                dismissRec(rec.key);
+                              }}>+ Add</button>
+                              <button className="rec-dismiss-btn" onClick={() => dismissRec(rec.key)}>✕</button>
+                            </div>
                           </div>
                         </div>
+                      );
+                    })}
+                    {hasMore && (
+                      <div style={{flexShrink:0,display:'flex',alignItems:'center',paddingRight:8}}>
+                        <button className="btn btn-secondary" style={{fontSize:12,padding:'8px 14px',whiteSpace:'nowrap'}}
+                          onClick={() => setRecsVisible(v => v + 10)}>
+                          Show {Math.min(10, visible.length - recsVisible)} more →
+                        </button>
                       </div>
-                    ))}
+                    )}
                   </div>
-                );
+                </>);
               })()}
             </div>
           )}
@@ -2893,6 +2955,7 @@ function App({ user, onSignOut }) {
                   <th>Who</th>
                   <th onClick={() => handleSort('network')}>Network <SortArrow field="network" /></th>
                   <th onClick={() => handleSort('rating')}>Rating <SortArrow field="rating" /></th>
+                  <th onClick={() => handleSort('ratedDate')}>Rated <SortArrow field="ratedDate" /></th>
                   <th>Non-Free</th>
                 </tr>
               </thead>
@@ -2925,6 +2988,7 @@ function App({ user, onSignOut }) {
                         <td>{getWhoEmoji(row.who)}</td>
                         <td><span className="card-network">{row.network || '—'}</span></td>
                         <td>{row._avgRating > 0 ? <StarRating rating={row._avgRating} size={12}/> : <span style={{color:'var(--text-muted)'}}>—</span>}</td>
+                        <td></td>
                         <td>{row.nonFree ? <span className="tag tag-nonfree">$</span> : ''}</td>
                       </tr>
                     );
