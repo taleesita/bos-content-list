@@ -2084,7 +2084,9 @@ function App({ user, onSignOut }) {
   const [dismissedRecs, setDismissedRecs] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
   });
-  const [snoozedRecs, setSnoozedRecs] = useState(new Set()); // session-only, resets on refresh
+  const [snoozedRecs, setSnoozedRecs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('snoozed_recs') || '{}'); } catch { return {}; }
+  }); // { key: expiryTimestamp }, persisted for 30 days
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
@@ -2215,7 +2217,11 @@ function App({ user, onSignOut }) {
     });
   };
   const snoozeRec = (key) => {
-    setSnoozedRecs(prev => { const next = new Set(prev); next.add(key); return next; });
+    setSnoozedRecs(prev => {
+      const next = { ...prev, [key]: Date.now() + 30 * 24 * 60 * 60 * 1000 };
+      try { localStorage.setItem('snoozed_recs', JSON.stringify(next)); } catch {}
+      return next;
+    });
   };
 
   const fetchRecs = useCallback(async () => {
@@ -2834,7 +2840,7 @@ function App({ user, onSignOut }) {
             <span className="recs-toggle-label">
               💡 Recommendations
               {recs !== null && !recsLoading && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !snoozedRecs.has(r.key));
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
                 return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null;
               })()}
               {recsLoading && <span style={{fontSize:12,color:'var(--accent-gold)',fontFamily:'Inter',fontWeight:400,letterSpacing:0}}>fetching…</span>}
@@ -2860,7 +2866,7 @@ function App({ user, onSignOut }) {
                 </div>
               )}
               {recs !== null && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !snoozedRecs.has(r.key));
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
                 if (!recsLoading && !visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
                 const page = visible.slice(0, recsVisible);
                 const hasMore = visible.length > recsVisible;
