@@ -227,22 +227,24 @@
 
   /* Recs panel */
   .recs-bar {
-    background: var(--bg-secondary);
+    background: linear-gradient(180deg, rgba(245,197,24,0.06) 0%, transparent 100%);
     border-bottom: 1px solid var(--border);
     padding: 0 24px;
   }
   .recs-toggle {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 0; cursor: pointer; user-select: none;
+    padding: 12px 0; cursor: pointer; user-select: none;
   }
   .recs-toggle-label {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 15px; font-weight: 700; color: var(--text-primary);
+    font-family: 'Bebas Neue', cursive; letter-spacing: 1px;
   }
   .recs-badge {
     background: var(--accent-gold); color: #000;
-    font-size: 10px; font-weight: 700; padding: 1px 6px;
-    border-radius: 10px; min-width: 18px; text-align: center;
+    font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 10px; min-width: 22px; text-align: center;
+    font-family: 'Inter', sans-serif;
   }
   .recs-scroll {
     display: flex; gap: 12px; overflow-x: auto; padding-bottom: 14px;
@@ -2145,91 +2147,143 @@ function App({ user, onSignOut }) {
     const results = [];
     const now = new Date();
 
-    // ── 1. UPCOMING SEASONS ──────────────────────────────────────────────
-    // For each TV show in list, find the next season not yet tracked
-    const tvByTmdbId = {};
-    items.filter(i => i.type === 'tv' && i.tmdbId).forEach(i => {
-      const id = String(i.tmdbId);
-      if (!tvByTmdbId[id]) tvByTmdbId[id] = { tmdbId: i.tmdbId, title: i.title, posterUrl: i.posterUrl, seasons: new Set() };
-      tvByTmdbId[id].seasons.add(parseInt(i.season) || 0);
-    });
-
+    // Build lookup maps
     const existingTmdbIds = new Set(items.map(i => i.tmdbId).filter(Boolean).map(String));
     const existingTitles = new Set(items.map(i => i.title.toLowerCase().trim()));
 
-    const showEntries = Object.values(tvByTmdbId).slice(0, 30);
-    await Promise.all(showEntries.map(async (show) => {
-      try {
-        const res = await fetch(`https://api.themoviedb.org/3/tv/${show.tmdbId}?api_key=${TMDB_API_KEY}`);
-        const data = await res.json();
-        const maxTracked = Math.max(...show.seasons);
-        const nextNum = maxTracked + 1;
-        const nextSeason = (data.seasons || []).find(s => s.season_number === nextNum && s.season_number > 0);
-        if (nextSeason && nextSeason.air_date) {
-          const airDate = new Date(nextSeason.air_date);
-          const daysUntil = Math.round((airDate - now) / 86400000);
-          // Surface if: airing within 90 days OR aired in last 30 days (might have missed it)
-          if (daysUntil > -30 && daysUntil < 90) {
-            results.push({
-              key: `upcoming_${show.tmdbId}_s${nextNum}`,
-              type: 'upcoming',
-              title: show.title,
-              season: nextNum,
-              tmdbId: show.tmdbId,
-              mediaType: 'tv',
-              posterUrl: nextSeason.poster_path ? TMDB_IMG_BASE + nextSeason.poster_path : show.posterUrl,
-              airDate: nextSeason.air_date,
-              daysUntil,
-              reason: daysUntil < 0 ? `Season ${nextNum} aired ${Math.abs(daysUntil)}d ago` : daysUntil === 0 ? `Season ${nextNum} airs today!` : `Season ${nextNum} in ${daysUntil} days`,
-            });
+    // ── 1. UPCOMING SEASONS ──────────────────────────────────────────────
+    // Group ALL tv shows by title (not just tmdbId — many items may lack it)
+    const tvByTitle = {};
+    items.filter(i => i.type === 'tv').forEach(i => {
+      const key = i.title.toLowerCase().trim();
+      if (!tvByTitle[key]) tvByTitle[key] = {
+        title: i.title, tmdbId: i.tmdbId || null,
+        posterUrl: i.posterUrl || '', seasons: new Set(), maxRating: 0,
+      };
+      if (i.tmdbId && !tvByTitle[key].tmdbId) tvByTitle[key].tmdbId = i.tmdbId;
+      if (i.posterUrl && !tvByTitle[key].posterUrl) tvByTitle[key].posterUrl = i.posterUrl;
+      tvByTitle[key].seasons.add(parseInt(i.season) || 0);
+      if (i.rating > tvByTitle[key].maxRating) tvByTitle[key].maxRating = i.rating;
+    });
+
+    // Only check shows with at least 1 real season tracked (season > 0)
+    const tvShows = Object.values(tvByTitle)
+      .filter(s => [...s.seasons].some(n => n > 0))
+      .slice(0, 40); // cap API calls
+
+    // Fetch in small parallel batches
+    const upcomingBatch = 8;
+    for (let i = 0; i < tvShows.length; i += upcomingBatch) {
+      await Promise.all(tvShows.slice(i, i + upcomingBatch).map(async (show) => {
+        try {
+          let tmdbId = show.tmdbId;
+          if (!tmdbId) {
+            const sr = await fetch(`https://api.themoviedb.org/3/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(show.title)}`);
+            const sd = await sr.json();
+            tmdbId = sd.results?.[0]?.id;
           }
-        }
-      } catch(e) {}
-    }));
+          if (!tmdbId) return;
+
+          const res = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+          const data = await res.json();
+
+          const trackedSeasons = [...show.seasons].filter(n => n > 0);
+          const maxTracked = Math.max(...trackedSeasons);
+
+          // Check if TMDB has an announced next season
+          const nextNum = maxTracked + 1;
+          const allSeasons = (data.seasons || []).filter(s => s.season_number > 0);
+          const nextSeason = allSeasons.find(s => s.season_number === nextNum);
+
+          let airDateStr = nextSeason?.air_date || null;
+          // Fall back to next_episode_to_air on the show
+          if (!airDateStr && data.next_episode_to_air?.season_number === nextNum) {
+            airDateStr = data.next_episode_to_air.air_date;
+          }
+
+          if (airDateStr) {
+            const airDate = new Date(airDateStr);
+            const daysUntil = Math.round((airDate - now) / 86400000);
+            // Surface: up to 6 months future OR up to 90 days past (recently released)
+            if (daysUntil > -90 && daysUntil < 180) {
+              const alreadyAdded = show.seasons.has(nextNum);
+              if (!alreadyAdded) {
+                const posterUrl = nextSeason?.poster_path
+                  ? TMDB_IMG_BASE + nextSeason.poster_path
+                  : (data.poster_path ? TMDB_IMG_BASE + data.poster_path : show.posterUrl);
+                const dateLabel = daysUntil < 0
+                  ? `S${nextNum} released ${Math.abs(daysUntil)}d ago`
+                  : daysUntil === 0 ? `S${nextNum} drops today! 🎉`
+                  : daysUntil <= 7 ? `S${nextNum} in ${daysUntil} days`
+                  : `S${nextNum} · ${new Date(airDateStr).toLocaleDateString('en-US',{month:'short',day:'numeric',year:daysUntil>300?'numeric':undefined})}`;
+                results.push({
+                  key: `upcoming_${tmdbId}_s${nextNum}`,
+                  type: 'upcoming', title: show.title, season: nextNum,
+                  tmdbId, mediaType: 'tv', posterUrl, airDate: airDateStr,
+                  daysUntil, reason: dateLabel,
+                });
+              }
+            }
+          }
+        } catch(e) {}
+      }));
+    }
 
     // ── 2. SIMILAR CONTENT ───────────────────────────────────────────────
-    // Take top-rated items (3.5+) with tmdbId, get recommendations for each
-    const highRated = [...items]
-      .filter(i => i.rating >= 3.5 && i.tmdbId)
-      .sort((a, b) => b.rating - a.rating)
-      .slice(0, 10);
+    // Seed from 4★+ rated items; dedupe aggressively
+    const seeds = [...items]
+      .filter(i => i.rating >= 4 && i.tmdbId)
+      .sort((a, b) => b.rating - a.rating || (b.ratedDate||'').localeCompare(a.ratedDate||''))
+      .slice(0, 12);
 
-    const similarSeen = new Set();
-    await Promise.all(highRated.map(async (item) => {
+    // Score map: tmdbId → { rec, score, reasons[] }
+    const recMap = new Map();
+
+    await Promise.all(seeds.map(async (seed) => {
       try {
-        const mediaType = item.type === 'movie' ? 'movie' : 'tv';
-        const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/recommendations?api_key=${TMDB_API_KEY}`);
-        const data = await res.json();
-        (data.results || []).slice(0, 8).forEach(r => {
+        const mt = seed.type === 'movie' ? 'movie' : 'tv';
+        const [recRes, simRes] = await Promise.all([
+          fetch(`https://api.themoviedb.org/3/${mt}/${seed.tmdbId}/recommendations?api_key=${TMDB_API_KEY}`),
+          fetch(`https://api.themoviedb.org/3/${mt}/${seed.tmdbId}/similar?api_key=${TMDB_API_KEY}`),
+        ]);
+        const [recData, simData] = await Promise.all([recRes.json(), simRes.json()]);
+        const allResults = [...(recData.results||[]), ...(simData.results||[])];
+        allResults.forEach(r => {
           const rTitle = (r.name || r.title || '').trim();
           const rId = String(r.id);
-          if (similarSeen.has(rId)) return;
           if (existingTmdbIds.has(rId)) return;
           if (existingTitles.has(rTitle.toLowerCase())) return;
-          if (!r.poster_path) return; // skip items without art
-          similarSeen.add(rId);
-          results.push({
-            key: `similar_${rId}`,
-            type: 'similar',
-            title: rTitle,
-            tmdbId: r.id,
-            mediaType,
-            posterUrl: TMDB_IMG_BASE + r.poster_path,
-            overview: r.overview || '',
-            basedOnTitle: item.title,
-            basedOnRating: item.rating,
-            reason: `Because you liked ${item.title}`,
-          });
+          if (!r.poster_path) return;
+          if (!recMap.has(rId)) {
+            recMap.set(rId, {
+              key: `similar_${rId}`, type: 'similar',
+              title: rTitle, tmdbId: r.id, mediaType: mt,
+              posterUrl: TMDB_IMG_BASE + r.poster_path,
+              overview: r.overview || '',
+              score: 0, topSeed: seed, topRating: seed.rating,
+            });
+          }
+          const entry = recMap.get(rId);
+          entry.score += seed.rating; // higher score = recommended by more / higher rated seeds
+          if (seed.rating > entry.topRating) { entry.topSeed = seed; entry.topRating = seed.rating; }
         });
       } catch(e) {}
     }));
 
-    // Sort: upcoming first (by soonest), then similar
+    // Top 15 by score, deduplicated
+    const similar = [...recMap.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15)
+      .map(e => ({ ...e, reason: `Because you liked ${e.topSeed.title}` }));
+
+    results.push(...similar);
+
+    // Sort: upcoming soonest first, then similar by score
     results.sort((a, b) => {
       if (a.type === 'upcoming' && b.type !== 'upcoming') return -1;
-      if (a.type !== 'upcoming' && b.type === 'upcoming') return 1;
+      if (b.type === 'upcoming' && a.type !== 'upcoming') return 1;
       if (a.type === 'upcoming') return (a.daysUntil ?? 999) - (b.daysUntil ?? 999);
-      return 0;
+      return (b.score || 0) - (a.score || 0);
     });
 
     setRecs(results);
@@ -2576,11 +2630,22 @@ function App({ user, onSignOut }) {
         <div className="recs-bar">
           <div className="recs-toggle" onClick={toggleRecs}>
             <span className="recs-toggle-label">
-              💡 For You
-              {recs !== null && (() => { const visible = recs.filter(r => !dismissedRecs.has(r.key)); return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null; })()}
-              {recsLoading && <span style={{fontSize:11,color:'var(--text-muted)'}}>loading…</span>}
+              💡 Recommendations
+              {recs !== null && !recsLoading && (() => {
+                const visible = recs.filter(r => !dismissedRecs.has(r.key));
+                return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null;
+              })()}
+              {recsLoading && <span style={{fontSize:12,color:'var(--accent-gold)',fontFamily:'Inter',fontWeight:400,letterSpacing:0}}>fetching…</span>}
             </span>
-            <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              {showRecs && recs !== null && !recsLoading && (
+                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)'}}
+                  onClick={(e) => { e.stopPropagation(); setRecs(null); fetchRecs(); }}>
+                  🔄 Refresh
+                </span>
+              )}
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
+            </div>
           </div>
 
           {showRecs && (
