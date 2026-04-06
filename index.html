@@ -1869,7 +1869,7 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate })
           <select autoFocus className="inline-select" value={item.who}
             onChange={e => save('who', e.target.value)}
             onBlur={cancel} onClick={e => e.stopPropagation()}>
-            {WHO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.emoji} {o.label}</option>)}
+            {WHO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         ) : <span className="editable-cell">{getWhoEmoji(item.who)}</span>}
       </td>
