@@ -2197,12 +2197,15 @@ function App({ user, onSignOut }) {
       if (i.posterUrl && !tvByTitle[key].posterUrl) tvByTitle[key].posterUrl = i.posterUrl;
       tvByTitle[key].seasons.add(parseInt(i.season) || 0);
       if (i.rating > tvByTitle[key].maxRating) tvByTitle[key].maxRating = i.rating;
+      if ((i.ratedDate || '') > (tvByTitle[key].lastRatedDate || '')) tvByTitle[key].lastRatedDate = i.ratedDate || '';
     });
 
     // Only check shows with at least 1 real season tracked (season > 0)
+    // Sort by most recently rated / highest rated first so important shows get checked first
     const tvShows = Object.values(tvByTitle)
       .filter(s => [...s.seasons].some(n => n > 0))
-      .slice(0, 40); // cap API calls
+      .sort((a, b) => (b.maxRating || 0) - (a.maxRating || 0))
+      .slice(0, 200); // check up to 200 shows
 
     // Fetch in small parallel batches
     const upcomingBatch = 8;
