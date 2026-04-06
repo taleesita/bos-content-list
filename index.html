@@ -1310,6 +1310,13 @@ function useDataStore() {
     return unsubscribe;
   }, []);
 
+  // Load snoozed recs from Firestore (syncs across devices)
+  useEffect(() => {
+    db.collection('settings').doc('rec_snooze').get().then(doc => {
+      if (doc.exists) setSnoozedRecs(doc.data() || {});
+    }).catch(() => {});
+  }, []);
+
   const addItem = useCallback(async (item) => {
     const now = new Date();
     const newItem = {
@@ -2084,9 +2091,7 @@ function App({ user, onSignOut }) {
   const [dismissedRecs, setDismissedRecs] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
   });
-  const [snoozedRecs, setSnoozedRecs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('snoozed_recs') || '{}'); } catch { return {}; }
-  }); // { key: expiryTimestamp }, persisted for 30 days
+  const [snoozedRecs, setSnoozedRecs] = useState({}); // { key: expiryTimestamp }, synced to Firestore
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
@@ -2219,7 +2224,7 @@ function App({ user, onSignOut }) {
   const snoozeRec = (key) => {
     setSnoozedRecs(prev => {
       const next = { ...prev, [key]: Date.now() + 30 * 24 * 60 * 60 * 1000 };
-      try { localStorage.setItem('snoozed_recs', JSON.stringify(next)); } catch {}
+      db.collection('settings').doc('rec_snooze').set(next).catch(() => {});
       return next;
     });
   };
