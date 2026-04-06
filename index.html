@@ -294,7 +294,7 @@
     border: 1px solid var(--border); cursor: pointer; font-weight: 700;
   }
   .rec-add-btn { background: var(--accent-gold); color: #000; border-color: var(--accent-gold) !important; }
-  .rec-dismiss-btn { background: transparent; color: var(--text-muted); flex: 0 0 32px; }
+  .rec-dismiss-btn { background: transparent; color: var(--text-muted); flex: 0 0 auto; padding: 5px 6px !important; font-size: 10px !important; }
   .recs-empty { padding: 16px 0; color: var(--text-muted); font-size: 13px; }
   @media (max-width: 768px) { .recs-bar { padding: 0 16px; } }
 
@@ -2083,6 +2083,7 @@ function App({ user, onSignOut }) {
   const [dismissedRecs, setDismissedRecs] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
   });
+  const [snoozedRecs, setSnoozedRecs] = useState(new Set()); // session-only, resets on refresh
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
@@ -2211,6 +2212,9 @@ function App({ user, onSignOut }) {
       try { localStorage.setItem('dismissed_recs', JSON.stringify([...next])); } catch {}
       return next;
     });
+  };
+  const snoozeRec = (key) => {
+    setSnoozedRecs(prev => { const next = new Set(prev); next.add(key); return next; });
   };
 
   const fetchRecs = useCallback(async () => {
@@ -2461,7 +2465,10 @@ function App({ user, onSignOut }) {
       if (r.type === 'similar' && MY_SUBS.includes(r.platform)) return 2;
       return 3;
     };
-    results.sort((a, b) => {
+    // Drop 'new' cards that have no genuine similarity connection — don't recommend just because it's on a platform
+    const filtered = results.filter(r => r.type !== 'new' || r.because);
+
+    filtered.sort((a, b) => {
       const ta = typeOrder(a), tb = typeOrder(b);
       if (ta !== tb) return ta - tb;
       if (a.type === 'upcoming') return (a.daysUntil ?? 999) - (b.daysUntil ?? 999);
@@ -2469,7 +2476,7 @@ function App({ user, onSignOut }) {
       return (b.score || 0) - (a.score || 0);
     });
 
-    setRecs([...results]);
+    setRecs([...filtered]);
     setRecsLoading(false);
   }, [items]);
 
@@ -2825,7 +2832,7 @@ function App({ user, onSignOut }) {
             <span className="recs-toggle-label">
               💡 Recommendations
               {recs !== null && !recsLoading && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key));
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !snoozedRecs.has(r.key));
                 return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null;
               })()}
               {recsLoading && <span style={{fontSize:12,color:'var(--accent-gold)',fontFamily:'Inter',fontWeight:400,letterSpacing:0}}>fetching…</span>}
@@ -2851,7 +2858,7 @@ function App({ user, onSignOut }) {
                 </div>
               )}
               {recs !== null && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key));
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !snoozedRecs.has(r.key));
                 if (!recsLoading && !visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
                 const page = visible.slice(0, recsVisible);
                 const hasMore = visible.length > recsVisible;
@@ -2872,12 +2879,12 @@ function App({ user, onSignOut }) {
                             }
                             <span className={`rec-card-badge ${badgeClass}`}>{badgeLabel}</span>
                             {isExpanded && rec.overview && (
-                              <div className="rec-desc-overlay">
+                              <div className="rec-desc-overlay" style={{overflowY:'auto'}}>
                                 <div style={{fontWeight:600,fontSize:11,color:'var(--text-primary)',marginBottom:4}}>{rec.title}</div>
-                                <div style={{overflow:'hidden',display:'-webkit-box',WebkitLineClamp:6,WebkitBoxOrient:'vertical'}}>
+                                <div style={{fontSize:10,lineHeight:1.45,color:'var(--text-secondary)'}}>
                                   {rec.overview}
                                 </div>
-                                <div style={{marginTop:6,fontSize:9,color:'var(--accent-gold)'}}>tap again to close</div>
+                                <div style={{marginTop:8,fontSize:9,color:'var(--accent-gold)',flexShrink:0}}>tap again to close</div>
                               </div>
                             )}
                             {rec.platform && (
@@ -2914,7 +2921,8 @@ function App({ user, onSignOut }) {
                                 });
                                 dismissRec(rec.key);
                               }}>+ Add</button>
-                              <button className="rec-dismiss-btn" onClick={() => dismissRec(rec.key)}>✕</button>
+                              <button className="rec-dismiss-btn" title="Dismiss for now (comes back next refresh)" onClick={() => snoozeRec(rec.key)}>later</button>
+                              <button className="rec-dismiss-btn" title="Never show again" onClick={() => dismissRec(rec.key)}>✕</button>
                             </div>
                           </div>
                         </div>
