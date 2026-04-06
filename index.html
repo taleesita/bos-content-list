@@ -63,6 +63,7 @@
   @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(245,197,24,0.2); } 50% { box-shadow: 0 0 20px rgba(245,197,24,0.4); } }
   @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   .fade-in { animation: fadeIn 0.3s ease-out; }
 
@@ -223,6 +224,62 @@
     transition: background 0.15s;
   }
   .clickable-stat:hover { background: rgba(245,197,24,0.08); }
+
+  /* Recs panel */
+  .recs-bar {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+  }
+  .recs-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; cursor: pointer; user-select: none;
+  }
+  .recs-toggle-label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  }
+  .recs-badge {
+    background: var(--accent-gold); color: #000;
+    font-size: 10px; font-weight: 700; padding: 1px 6px;
+    border-radius: 10px; min-width: 18px; text-align: center;
+  }
+  .recs-scroll {
+    display: flex; gap: 12px; overflow-x: auto; padding-bottom: 14px;
+    scrollbar-width: none;
+  }
+  .recs-scroll::-webkit-scrollbar { display: none; }
+  .rec-card {
+    flex-shrink: 0; width: 120px; background: var(--bg-card);
+    border-radius: 10px; border: 1px solid var(--border);
+    overflow: hidden; position: relative;
+    transition: border-color 0.2s;
+  }
+  .rec-card:hover { border-color: var(--accent-gold); }
+  .rec-card-poster {
+    width: 100%; aspect-ratio: 2/3; background: var(--bg-secondary);
+    display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative;
+  }
+  .rec-card-poster img { width: 100%; height: 100%; object-fit: cover; }
+  .rec-card-badge {
+    position: absolute; top: 5px; left: 5px;
+    font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    backdrop-filter: blur(4px);
+  }
+  .rec-badge-upcoming { background: rgba(79,195,247,0.85); color: #000; }
+  .rec-badge-similar { background: rgba(171,71,188,0.85); color: #fff; }
+  .rec-card-body { padding: 7px 8px; }
+  .rec-card-title { font-size: 11px; font-weight: 600; line-height: 1.3; margin-bottom: 3px; }
+  .rec-card-reason { font-size: 9px; color: var(--text-muted); line-height: 1.3; margin-bottom: 6px; }
+  .rec-card-actions { display: flex; gap: 4px; }
+  .rec-card-actions button {
+    flex: 1; font-size: 10px; padding: 4px 2px; border-radius: 5px;
+    border: 1px solid var(--border); cursor: pointer; font-weight: 600;
+  }
+  .rec-add-btn { background: var(--accent-gold); color: #000; border-color: var(--accent-gold) !important; }
+  .rec-dismiss-btn { background: transparent; color: var(--text-muted); }
+  .recs-empty { padding: 16px 0; color: var(--text-muted); font-size: 13px; }
+  @media (max-width: 768px) { .recs-bar { padding: 0 16px; } }
 
   /* Filter bar */
   .filter-bar {
@@ -1946,6 +2003,12 @@ function App({ user, onSignOut }) {
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [showRecs, setShowRecs] = useState(false);
+  const [recs, setRecs] = useState(null); // null=not fetched, []|[...]=fetched
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [dismissedRecs, setDismissedRecs] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
+  });
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
@@ -2066,6 +2129,120 @@ function App({ user, onSignOut }) {
     setDescProgress(null);
     showToast('📖 Descriptions fetched!');
   }, [items]);
+
+  const dismissRec = (key) => {
+    setDismissedRecs(prev => {
+      const next = new Set(prev);
+      next.add(key);
+      try { localStorage.setItem('dismissed_recs', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  const fetchRecs = useCallback(async () => {
+    if (!TMDB_API_KEY) return;
+    setRecsLoading(true);
+    const results = [];
+    const now = new Date();
+
+    // ── 1. UPCOMING SEASONS ──────────────────────────────────────────────
+    // For each TV show in list, find the next season not yet tracked
+    const tvByTmdbId = {};
+    items.filter(i => i.type === 'tv' && i.tmdbId).forEach(i => {
+      const id = String(i.tmdbId);
+      if (!tvByTmdbId[id]) tvByTmdbId[id] = { tmdbId: i.tmdbId, title: i.title, posterUrl: i.posterUrl, seasons: new Set() };
+      tvByTmdbId[id].seasons.add(parseInt(i.season) || 0);
+    });
+
+    const existingTmdbIds = new Set(items.map(i => i.tmdbId).filter(Boolean).map(String));
+    const existingTitles = new Set(items.map(i => i.title.toLowerCase().trim()));
+
+    const showEntries = Object.values(tvByTmdbId).slice(0, 30);
+    await Promise.all(showEntries.map(async (show) => {
+      try {
+        const res = await fetch(`https://api.themoviedb.org/3/tv/${show.tmdbId}?api_key=${TMDB_API_KEY}`);
+        const data = await res.json();
+        const maxTracked = Math.max(...show.seasons);
+        const nextNum = maxTracked + 1;
+        const nextSeason = (data.seasons || []).find(s => s.season_number === nextNum && s.season_number > 0);
+        if (nextSeason && nextSeason.air_date) {
+          const airDate = new Date(nextSeason.air_date);
+          const daysUntil = Math.round((airDate - now) / 86400000);
+          // Surface if: airing within 90 days OR aired in last 30 days (might have missed it)
+          if (daysUntil > -30 && daysUntil < 90) {
+            results.push({
+              key: `upcoming_${show.tmdbId}_s${nextNum}`,
+              type: 'upcoming',
+              title: show.title,
+              season: nextNum,
+              tmdbId: show.tmdbId,
+              mediaType: 'tv',
+              posterUrl: nextSeason.poster_path ? TMDB_IMG_BASE + nextSeason.poster_path : show.posterUrl,
+              airDate: nextSeason.air_date,
+              daysUntil,
+              reason: daysUntil < 0 ? `Season ${nextNum} aired ${Math.abs(daysUntil)}d ago` : daysUntil === 0 ? `Season ${nextNum} airs today!` : `Season ${nextNum} in ${daysUntil} days`,
+            });
+          }
+        }
+      } catch(e) {}
+    }));
+
+    // ── 2. SIMILAR CONTENT ───────────────────────────────────────────────
+    // Take top-rated items (3.5+) with tmdbId, get recommendations for each
+    const highRated = [...items]
+      .filter(i => i.rating >= 3.5 && i.tmdbId)
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 10);
+
+    const similarSeen = new Set();
+    await Promise.all(highRated.map(async (item) => {
+      try {
+        const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+        const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/recommendations?api_key=${TMDB_API_KEY}`);
+        const data = await res.json();
+        (data.results || []).slice(0, 8).forEach(r => {
+          const rTitle = (r.name || r.title || '').trim();
+          const rId = String(r.id);
+          if (similarSeen.has(rId)) return;
+          if (existingTmdbIds.has(rId)) return;
+          if (existingTitles.has(rTitle.toLowerCase())) return;
+          if (!r.poster_path) return; // skip items without art
+          similarSeen.add(rId);
+          results.push({
+            key: `similar_${rId}`,
+            type: 'similar',
+            title: rTitle,
+            tmdbId: r.id,
+            mediaType,
+            posterUrl: TMDB_IMG_BASE + r.poster_path,
+            overview: r.overview || '',
+            basedOnTitle: item.title,
+            basedOnRating: item.rating,
+            reason: `Because you liked ${item.title}`,
+          });
+        });
+      } catch(e) {}
+    }));
+
+    // Sort: upcoming first (by soonest), then similar
+    results.sort((a, b) => {
+      if (a.type === 'upcoming' && b.type !== 'upcoming') return -1;
+      if (a.type !== 'upcoming' && b.type === 'upcoming') return 1;
+      if (a.type === 'upcoming') return (a.daysUntil ?? 999) - (b.daysUntil ?? 999);
+      return 0;
+    });
+
+    setRecs(results);
+    setRecsLoading(false);
+  }, [items]);
+
+  // Open recs and fetch if needed
+  const toggleRecs = () => {
+    setShowRecs(prev => {
+      if (!prev && recs === null) fetchRecs();
+      return !prev;
+    });
+  };
 
   // Toast helper — showToast(msg) or showToast(msg, { onUndo: fn, duration: ms })
   const showToast = (msg, options = {}) => {
@@ -2394,6 +2571,78 @@ function App({ user, onSignOut }) {
         </div>
       </div>
 
+      {/* ── RECS PANEL ── */}
+      {TMDB_API_KEY && (
+        <div className="recs-bar">
+          <div className="recs-toggle" onClick={toggleRecs}>
+            <span className="recs-toggle-label">
+              💡 For You
+              {recs !== null && (() => { const visible = recs.filter(r => !dismissedRecs.has(r.key)); return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null; })()}
+              {recsLoading && <span style={{fontSize:11,color:'var(--text-muted)'}}>loading…</span>}
+            </span>
+            <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
+          </div>
+
+          {showRecs && (
+            <div style={{paddingBottom:4}}>
+              {recsLoading && (
+                <div style={{padding:'12px 0',color:'var(--text-muted)',fontSize:13,display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>
+                  Checking TMDB for upcoming seasons &amp; recommendations…
+                </div>
+              )}
+              {!recsLoading && recs !== null && (() => {
+                const visible = recs.filter(r => !dismissedRecs.has(r.key));
+                if (!visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
+                return (
+                  <div className="recs-scroll">
+                    {visible.map(rec => (
+                      <div key={rec.key} className="rec-card">
+                        <div className="rec-card-poster">
+                          {rec.posterUrl
+                            ? <img src={rec.posterUrl} alt={rec.title} loading="lazy" />
+                            : <span style={{fontSize:32,opacity:0.3}}>{rec.mediaType === 'movie' ? '🎥' : '📺'}</span>
+                          }
+                          <span className={`rec-card-badge ${rec.type === 'upcoming' ? 'rec-badge-upcoming' : 'rec-badge-similar'}`}>
+                            {rec.type === 'upcoming' ? '📅 NEW SEASON' : '✨ FOR YOU'}
+                          </span>
+                        </div>
+                        <div className="rec-card-body">
+                          <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
+                          <div className="rec-card-reason">{rec.reason}</div>
+                          <div className="rec-card-actions">
+                            <button className="rec-add-btn" onClick={() => {
+                              setShowForm({
+                                title: rec.title,
+                                type: rec.mediaType === 'movie' ? 'movie' : 'tv',
+                                season: rec.season ? String(rec.season) : '',
+                                status: 'want_to_watch',
+                                priority: '1',
+                                network: '',
+                                who: 'together',
+                                nonFree: false,
+                                posterUrl: rec.posterUrl || '',
+                                tmdbId: rec.tmdbId || null,
+                                rating: 0,
+                                ratedDate: '',
+                                releaseDate: rec.airDate || '',
+                                overview: rec.overview || '',
+                              });
+                              dismissRec(rec.key);
+                            }}>+ Add</button>
+                            <button className="rec-dismiss-btn" onClick={() => dismissRec(rec.key)}>✕</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="filter-bar">
         {/* Mobile filter toggle */}
@@ -2636,7 +2885,7 @@ function App({ user, onSignOut }) {
 
       {/* Modals */}
       {showForm && (
-        <FormModal onSave={handleAdd} onClose={() => setShowForm(false)} />
+        <FormModal item={showForm !== true ? showForm : null} onSave={handleAdd} onClose={() => setShowForm(false)} />
       )}
 
       {editItem && (
