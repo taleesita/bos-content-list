@@ -1882,13 +1882,23 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate })
       <td onClick={(e) => startEdit(e, 'ratedDate')}>
         {editing('ratedDate') ? (
           <input autoFocus className="inline-input" type="date"
-            defaultValue={item.ratedDate ? (() => { try { const d = new Date(item.ratedDate); return d.toISOString().slice(0,10); } catch { return ''; } })() : ''}
+            defaultValue={item.ratedDate ? (() => {
+              const s = item.ratedDate;
+              if (s.includes('-')) return s.split('T')[0];
+              if (s.includes('/')) { const p = s.split('/'); const m = String(parseInt(p[0])).padStart(2,'0'), d = String(parseInt(p[1])).padStart(2,'0'), y = parseInt(p[2]); if (!isNaN(y)) return `${y}-${m}-${d}`; }
+              return '';
+            })() : ''}
             onBlur={e => save('ratedDate', e.target.value)}
             onKeyDown={e => { if (e.key==='Enter') save('ratedDate', e.target.value); if (e.key==='Escape') cancel(); }}
             onClick={e => e.stopPropagation()} />
         ) : (
           <span className="editable-cell" style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>
-            {item.ratedDate ? (() => { try { const d = new Date(item.ratedDate); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; } catch { return item.ratedDate; } })() : '—'}
+            {item.ratedDate ? (() => {
+              const s = item.ratedDate;
+              if (s.includes('/')) { const p = s.split('/'); const m = parseInt(p[0]), d = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(m) && !isNaN(d) && !isNaN(y)) return `${m}/${d}/${y}`; }
+              if (s.includes('-')) { const p = s.split('T')[0].split('-'); if (p.length >= 3) { const y = parseInt(p[0]), m = parseInt(p[1]), d = parseInt(p[2]); if (!isNaN(y) && !isNaN(m) && !isNaN(d)) return `${m}/${d}/${y}`; } }
+              return s;
+            })() : ''}
           </span>
         )}
       </td>
