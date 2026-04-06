@@ -281,18 +281,18 @@
   .rec-badge-similar { background: rgba(171,71,188,0.9); color: #fff; }
   .rec-desc-overlay {
     position: absolute; inset: 0; background: rgba(10,10,20,0.93);
-    padding: 10px; display: flex; flex-direction: column; justify-content: center;
+    padding: 10px 10px 32px 10px; display: flex; flex-direction: column; justify-content: flex-start;
     font-size: 10px; line-height: 1.4; color: var(--text-secondary);
-    border-radius: 12px; overflow: hidden;
+    border-radius: 12px; overflow-y: auto; overflow-x: hidden;
   }
-  .rec-card-body { padding: 8px 10px; display: flex; flex-direction: column; height: 110px; }
+  .rec-card-body { padding: 8px 10px; display: flex; flex-direction: column; height: 126px; }
   .rec-card-title {
     font-size: 12px; font-weight: 700; line-height: 1.3; color: var(--text-primary);
     overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     flex: 0 0 32px; margin-bottom: 4px;
   }
-  .rec-card-reason { font-size: 10px; color: var(--accent-gold); line-height: 1.3; font-weight: 500; flex: 0 0 14px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .rec-card-because { font-size: 9px; color: var(--text-muted); line-height: 1.3; font-style: italic; flex: 0 0 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px; }
+  .rec-card-reason { font-size: 10px; color: var(--accent-gold); line-height: 1.3; font-weight: 500; flex: 0 0 auto; max-height: 28px; overflow: hidden; }
+  .rec-card-because { font-size: 9px; color: var(--text-muted); line-height: 1.3; font-style: italic; flex: 0 0 auto; max-height: 24px; overflow: hidden; margin-top: 3px; }
   .rec-card-actions { display: flex; gap: 5px; margin-top: auto; padding-top: 4px; }
   .rec-card-actions button {
     flex: 1; font-size: 11px; padding: 5px 4px; border-radius: 7px;
@@ -2096,6 +2096,7 @@ function App({ user, onSignOut }) {
   const [dismissedRecs, setDismissedRecs] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('dismissed_recs') || '[]')); } catch { return new Set(); }
   });
+  const [showRestorePanel, setShowRestorePanel] = useState(false);
   const [snoozedRecs, setSnoozedRecs] = useState({}); // { key: expiryTimestamp }, synced to Firestore
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
@@ -2858,9 +2859,8 @@ function App({ user, onSignOut }) {
             <div style={{display:'flex',alignItems:'center',gap:10}}>
               {showRecs && dismissedRecs.size > 0 && (
                 <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
-                  title={`Restore ${dismissedRecs.size} dismissed card${dismissedRecs.size > 1 ? 's' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); setDismissedRecs(new Set()); try { localStorage.removeItem('dismissed_recs'); } catch {} }}>
-                  ↩ Restore ({dismissedRecs.size})
+                  onClick={(e) => { e.stopPropagation(); setShowRestorePanel(p => !p); }}>
+                  ↩ Dismissed ({dismissedRecs.size})
                 </span>
               )}
               {showRecs && recs !== null && !recsLoading && (
@@ -2873,6 +2873,33 @@ function App({ user, onSignOut }) {
               <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
             </div>
           </div>
+
+          {showRecs && showRestorePanel && recs && dismissedRecs.size > 0 && (
+            <div style={{margin:'0 0 10px 0',background:'var(--bg-secondary)',borderRadius:10,padding:'10px 12px',border:'1px solid var(--border)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>Dismissed recommendations</span>
+                <span style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer'}} onClick={() => setShowRestorePanel(false)}>✕</span>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                {recs.filter(r => dismissedRecs.has(r.key)).map(r => (
+                  <div key={r.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'5px 8px',background:'var(--bg-card)',borderRadius:7,border:'1px solid var(--border)'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.title}{r.season ? ` S${r.season}` : ''}</div>
+                      <div style={{fontSize:10,color:'var(--accent-gold)'}}>{r.because || r.reason}</div>
+                    </div>
+                    <button onClick={() => {
+                      setDismissedRecs(prev => { const next = new Set(prev); next.delete(r.key); try { localStorage.setItem('dismissed_recs', JSON.stringify([...next])); } catch {} return next; });
+                    }} style={{flexShrink:0,fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid var(--accent-gold)',background:'transparent',color:'var(--accent-gold)',cursor:'pointer',fontWeight:600}}>
+                      Restore
+                    </button>
+                  </div>
+                ))}
+                {recs.filter(r => dismissedRecs.has(r.key)).length === 0 && (
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>Nothing left to restore.</div>
+                )}
+              </div>
+            </div>
+          )}
 
           {showRecs && (
             <div style={{paddingBottom:4}}>
@@ -2912,7 +2939,7 @@ function App({ user, onSignOut }) {
                                 <div style={{marginTop:8,fontSize:9,color:'var(--accent-gold)',flexShrink:0}}>tap again to close</div>
                               </div>
                             )}
-                            {rec.platform && (
+                            {rec.platform && !isExpanded && (
                               <span style={{position:'absolute',bottom:5,left:5,fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:4,
                                 background: onMySub ? 'rgba(102,187,106,0.9)' : 'rgba(0,0,0,0.7)',
                                 color: onMySub ? '#000' : '#aaa', backdropFilter:'blur(4px)'}}>
