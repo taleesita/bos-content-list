@@ -2056,6 +2056,7 @@ function App({ user, onSignOut }) {
   const [sortBy, setSortBy] = useState('status');
   const [sortDir, setSortDir] = useState('asc');
   const [showForm, setShowForm] = useState(false);
+  const pendingRecDismiss = React.useRef(null); // key to dismiss only if form is saved
   const [editItem, setEditItem] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
   const [toast, setToast] = useState(null);
@@ -2621,6 +2622,7 @@ function App({ user, onSignOut }) {
   // Handlers
   const handleAdd = (formData) => {
     addItem(formData);
+    if (pendingRecDismiss.current) { dismissRec(pendingRecDismiss.current); pendingRecDismiss.current = null; }
     showToast(`🎬 "${formData.title}" added to your list!`);
   };
 
@@ -2906,7 +2908,7 @@ function App({ user, onSignOut }) {
                               </>
                             )}
                             <div className="rec-card-actions">
-                              <button className="rec-add-btn" onClick={() => {
+                              <button className="rec-add-btn" style={{fontSize:14}} onClick={() => {
                                 const priorEntry = items.find(i => i.title.toLowerCase().trim() === rec.title.toLowerCase().trim());
                                 setShowForm({
                                   title: rec.title,
@@ -2919,10 +2921,10 @@ function App({ user, onSignOut }) {
                                   ratedDate: '', releaseDate: rec.airDate || '',
                                   overview: rec.overview || '',
                                 });
-                                dismissRec(rec.key);
-                              }}>+ Add</button>
-                              <button className="rec-dismiss-btn" title="Remind me later" onClick={() => snoozeRec(rec.key)}>🕐</button>
-                              <button className="rec-dismiss-btn" title="Never show again" onClick={() => dismissRec(rec.key)}>✕</button>
+                                pendingRecDismiss.current = rec.key;
+                              }}>➕</button>
+                              <button className="rec-dismiss-btn" title="Remind me later" onClick={() => snoozeRec(rec.key)}>💤</button>
+                              <button className="rec-dismiss-btn" title="Never show again" onClick={() => dismissRec(rec.key)}>❌</button>
                             </div>
                           </div>
                         </div>
@@ -3189,7 +3191,7 @@ function App({ user, onSignOut }) {
 
       {/* Modals */}
       {showForm && (
-        <FormModal item={showForm !== true ? showForm : null} onSave={handleAdd} onClose={() => setShowForm(false)} />
+        <FormModal item={showForm !== true ? showForm : null} onSave={handleAdd} onClose={() => { setShowForm(false); pendingRecDismiss.current = null; }} />
       )}
 
       {editItem && (
