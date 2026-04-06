@@ -1315,12 +1315,6 @@ function useDataStore() {
     return unsubscribe;
   }, []);
 
-  // Load snoozed recs from Firestore (syncs across devices)
-  useEffect(() => {
-    db.collection('settings').doc('rec_snooze').get().then(doc => {
-      if (doc.exists) setSnoozedRecs(doc.data() || {});
-    }).catch(() => {});
-  }, []);
 
   const addItem = useCallback(async (item) => {
     const now = new Date();
@@ -2088,7 +2082,7 @@ function App({ user, onSignOut }) {
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [showRecs, setShowRecs] = useState(false);
+  const [showRecs, setShowRecs] = useState(true);
   const [recs, setRecs] = useState(null); // null=not fetched, []|[...]=fetched
   const [recsLoading, setRecsLoading] = useState(false);
   const [recsVisible, setRecsVisible] = useState(10);
@@ -2098,6 +2092,12 @@ function App({ user, onSignOut }) {
   });
   const [showRestorePanel, setShowRestorePanel] = useState(false);
   const [snoozedRecs, setSnoozedRecs] = useState({}); // { key: expiryTimestamp }, synced to Firestore
+  // Load snoozed recs from Firestore (syncs across devices)
+  useEffect(() => {
+    db.collection('settings').doc('rec_snooze').get().then(doc => {
+      if (doc.exists) setSnoozedRecs(doc.data() || {});
+    }).catch(() => {});
+  }, []);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
 
@@ -2324,11 +2324,14 @@ function App({ user, onSignOut }) {
                   : daysUntil <= 7 ? `S${nextNum} in ${daysUntil} days`
                   : `S${nextNum} · ${new Date(airDateStr).toLocaleDateString('en-US',{month:'short',day:'numeric',year:daysUntil>300?'numeric':undefined})}`;
                 const prevMax = Math.max(...[...show.seasons].filter(n => n > 0));
+                // Network: use saved value, or fall back to TMDB's first listed network
+                const tmdbNetwork = data.networks?.[0]?.name || null;
+                const platform = show.network || tmdbNetwork;
                 results.push({
                   key: `upcoming_${tmdbId}_s${nextNum}`,
                   type: 'upcoming', title: show.title, season: nextNum,
                   tmdbId, mediaType: 'tv', posterUrl, airDate: airDateStr,
-                  daysUntil, reason: dateLabel, platform: show.network || null,
+                  daysUntil, reason: dateLabel, platform: platform || null,
                   overview: nextSeason?.overview || data.overview || '',
                   because: `Because you watched S${prevMax}`,
                 });
@@ -2368,6 +2371,10 @@ function App({ user, onSignOut }) {
           if (r.original_language && r.original_language !== 'en') {
             if (!existingTitles.has(rTitle.toLowerCase())) return;
           }
+          // Filter out obscure/old content: require meaningful vote count & recency
+          if ((r.vote_count || 0) < 30) return;
+          const airYear = parseInt((r.first_air_date || r.release_date || '2000').slice(0, 4));
+          if (airYear < 2005) return;
           if (!recMap.has(rId)) {
             recMap.set(rId, {
               key: `similar_${rId}`, type: 'similar',
@@ -2497,6 +2504,11 @@ function App({ user, onSignOut }) {
     setRecs([...filtered]);
     setRecsLoading(false);
   }, [items]);
+
+  // Auto-fetch recs on mount (banner defaults open)
+  useEffect(() => {
+    if (loaded && recs === null && !recsLoading) fetchRecs();
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open recs and fetch if needed
   const toggleRecs = () => {
@@ -2950,10 +2962,10 @@ function App({ user, onSignOut }) {
                           <div className="rec-card-body">
                             <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
                             <div className="rec-card-reason">
-                              {rec.type === 'similar' ? (rec.because || rec.reason) : rec.reason}
+                              {rec.because || rec.reason}
                             </div>
                             <div className="rec-card-because">
-                              {rec.type !== 'similar' ? (rec.because || '') : ''}
+                              {(rec.type !== 'similar' && rec.because) ? rec.reason : ''}
                             </div>
                             <div className="rec-card-actions">
                               <button className="rec-add-btn" style={{fontSize:14}} onClick={() => {
