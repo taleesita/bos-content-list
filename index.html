@@ -2237,15 +2237,15 @@ function App({ user, onSignOut }) {
           if (airDateStr) {
             const airDate = new Date(airDateStr);
             const daysUntil = Math.round((airDate - now) / 86400000);
-            // Surface: up to 6 months future OR up to 90 days past (recently released)
-            if (daysUntil > -90 && daysUntil < 180) {
+            // Surface: up to 6 months future OR up to 1 year past (haven't added it yet)
+            if (daysUntil > -365 && daysUntil < 180) {
               const alreadyAdded = show.seasons.has(nextNum);
               if (!alreadyAdded) {
                 const posterUrl = nextSeason?.poster_path
                   ? TMDB_IMG_BASE + nextSeason.poster_path
                   : (data.poster_path ? TMDB_IMG_BASE + data.poster_path : show.posterUrl);
                 const dateLabel = daysUntil < 0
-                  ? `S${nextNum} released ${Math.abs(daysUntil)}d ago`
+                  ? `S${nextNum} out since ${new Date(airDateStr).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
                   : daysUntil === 0 ? `S${nextNum} drops today! 🎉`
                   : daysUntil <= 7 ? `S${nextNum} in ${daysUntil} days`
                   : `S${nextNum} · ${new Date(airDateStr).toLocaleDateString('en-US',{month:'short',day:'numeric',year:daysUntil>300?'numeric':undefined})}`;
@@ -2363,8 +2363,8 @@ function App({ user, onSignOut }) {
               airDate: r.first_air_date, daysUntil,
               score: r.vote_average || 0,
               reason: daysUntil >= 0
-                ? `New on ${sub} · out ${new Date(r.first_air_date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
-                : `On ${sub} · premiered ${Math.abs(daysUntil)}d ago`,
+                ? `Out ${new Date(r.first_air_date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
+                : `Premiered ${Math.abs(daysUntil)}d ago`,
             });
           });
         } catch(e) {}
