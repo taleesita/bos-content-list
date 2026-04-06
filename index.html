@@ -1059,7 +1059,7 @@ const TMDB_API_KEY = '761b5bdc298a53e848abbc17ce7f81a3';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
 
 // Platforms you subscribe to — shown first in dropdowns
-const MY_SUBS = ['Netflix', 'Apple', 'Amazon Prime', 'Hulu', 'Disney', 'HBO / Max'];
+const MY_SUBS = ['Netflix', 'Apple', 'Amazon Prime', 'Hulu', 'Disney', 'HBO / Max', 'Izzy'];
 
 // TMDB network/company IDs for MY_SUBS — used to discover new shows on your platforms
 const MY_SUBS_TMDB_IDS = {
@@ -1069,6 +1069,7 @@ const MY_SUBS_TMDB_IDS = {
   'Hulu': [453],
   'Disney': [2739, 19],
   'HBO / Max': [49, 3186],
+  'Izzy': [], // TMDB network ID TBD
 };
 
 // Map TMDB provider names → our network labels
@@ -1088,6 +1089,7 @@ const PROVIDER_MAP = {
   'USA Network': 'USA', 'NBC': 'NBC', 'ABC': 'ABC', 'CBS': 'CBS',
   'Fox': 'Fox', 'Comedy Central': 'Comedy Central', 'Bravo': 'Bravo',
   'HGTV': 'HGTV', 'Sci-Fi': 'Sci-fi', 'Warner Bros': 'Warner Bros',
+  'Izzy': 'Izzy', 'YES+': 'Izzy', 'Yes+': 'Izzy',
 };
 
 // Fetch streaming providers for a TMDB id+type, returns our network label or null
@@ -2271,12 +2273,14 @@ function App({ user, onSignOut }) {
                   : daysUntil === 0 ? `S${nextNum} drops today! 🎉`
                   : daysUntil <= 7 ? `S${nextNum} in ${daysUntil} days`
                   : `S${nextNum} · ${new Date(airDateStr).toLocaleDateString('en-US',{month:'short',day:'numeric',year:daysUntil>300?'numeric':undefined})}`;
+                const prevMax = Math.max(...[...show.seasons].filter(n => n > 0));
                 results.push({
                   key: `upcoming_${tmdbId}_s${nextNum}`,
                   type: 'upcoming', title: show.title, season: nextNum,
                   tmdbId, mediaType: 'tv', posterUrl, airDate: airDateStr,
                   daysUntil, reason: dateLabel, platform: show.network || null,
                   overview: nextSeason?.overview || data.overview || '',
+                  because: `Because you watched S${prevMax}`,
                 });
               }
             }
@@ -2334,7 +2338,7 @@ function App({ user, onSignOut }) {
     const similar = [...recMap.values()]
       .sort((a, b) => b.score - a.score)
       .slice(0, 20)
-      .map(e => ({ ...e, reason: `Because you liked ${e.topSeed.title}` }));
+      .map(e => ({ ...e, reason: `Because you liked ${e.topSeed.title}`, because: `Because you liked ${e.topSeed.title}` }));
 
     results.push(...similar);
 
@@ -2659,9 +2663,14 @@ function App({ user, onSignOut }) {
           <div className="search-bar">
             <span>🔍</span>
             <input placeholder="Search titles, networks..."
-              value={search} onChange={e => setSearch(e.target.value)} />
+              value={search} onChange={e => {
+                const v = e.target.value;
+                setSearch(v);
+                if (v && filterStatus === 'unwatched') setFilterStatus('all');
+                if (!v) setFilterStatus('unwatched');
+              }} />
             {search && <span style={{cursor:'pointer',color:'var(--text-muted)'}}
-              onClick={() => setSearch('')}>✕</span>}
+              onClick={() => { setSearch(''); setFilterStatus('unwatched'); }}>✕</span>}
           </div>
 
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -2846,7 +2855,8 @@ function App({ user, onSignOut }) {
                           </div>
                           <div className="rec-card-body">
                             <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
-                            <div className="rec-card-reason">{rec.reason}</div>
+                            {rec.type !== 'similar' && <div className="rec-card-reason">{rec.reason}</div>}
+                            {rec.because && <div style={{fontSize:9,color:'var(--text-muted)',lineHeight:1.3,marginBottom:6,fontStyle:'italic'}}>{rec.because}</div>}
                             <div className="rec-card-actions">
                               <button className="rec-add-btn" onClick={() => {
                                 setShowForm({
