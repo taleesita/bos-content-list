@@ -1678,7 +1678,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 }
 
 // ============ DETAIL MODAL ============
-function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason }) {
+function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadOnly = false }) {
   const [addingNext, setAddingNext] = React.useState(false);
   const handleAddNextSeason = async () => {
     setAddingNext(true);
@@ -1752,18 +1752,22 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason }) {
           )}
 
           <div className="form-actions">
-            <button className="btn btn-danger btn-sm" onClick={() => { onDelete(item.id); onClose(); }}>
-              🗑 Delete
-            </button>
-            {canAddNextSeason && (
+            {!isReadOnly && (
+              <button className="btn btn-danger btn-sm" onClick={() => { onDelete(item.id); onClose(); }}>
+                🗑 Delete
+              </button>
+            )}
+            {!isReadOnly && canAddNextSeason && (
               <button className="btn btn-secondary" onClick={handleAddNextSeason} disabled={addingNext}
                 title={`Add Season ${nextSeasonNum} with status Want to Watch`}>
                 {addingNext ? '⏳' : `➕ Add S${nextSeasonNum}`}
               </button>
             )}
-            <button className="btn btn-primary" onClick={() => onEdit(item)}>
-              ✏️ Edit
-            </button>
+            {!isReadOnly && (
+              <button className="btn btn-primary" onClick={() => onEdit(item)}>
+                ✏️ Edit
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1828,9 +1832,9 @@ function InlineStarRating({ value, onChange }) {
   );
 }
 
-function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate }) {
-  const editing = (field) => inlineEdit?.id === item.id && inlineEdit?.field === field;
-  const startEdit = (e, field) => { e.stopPropagation(); setInlineEdit({ id: item.id, field }); };
+function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, isReadOnly = false }) {
+  const editing = (field) => !isReadOnly && inlineEdit?.id === item.id && inlineEdit?.field === field;
+  const startEdit = (e, field) => { if (isReadOnly) return; e.stopPropagation(); setInlineEdit({ id: item.id, field }); };
   const save = (field, value) => { onUpdate(item.id, { [field]: value }); setInlineEdit(null); };
   const cancel = () => setInlineEdit(null);
   return (
@@ -1948,6 +1952,7 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate })
 
 // ── Allowed users ──
 const ALLOWED_EMAILS = ['taly.matiteyahu@gmail.com', 'doug.pickard@gmail.com'];
+const READ_ONLY_EMAILS = ['wzfaith@gmail.com'];
 
 // ── Login Screen ──
 function LoginScreen({ onSignIn, denied }) {
@@ -2012,7 +2017,7 @@ function AuthWrapper({ children }) {
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(u => {
       if (u) {
-        if (ALLOWED_EMAILS.includes(u.email)) {
+        if (ALLOWED_EMAILS.includes(u.email) || READ_ONLY_EMAILS.includes(u.email)) {
           setUser(u);
           setDenied(false);
         } else {
@@ -2046,11 +2051,12 @@ function AuthWrapper({ children }) {
 
   if (!user) return <LoginScreen onSignIn={signIn} denied={denied} />;
 
-  return React.cloneElement(children, { user, onSignOut: signOut });
+  const isReadOnly = READ_ONLY_EMAILS.includes(user.email);
+  return React.cloneElement(children, { user, onSignOut: signOut, isReadOnly });
 }
 
 // ============ MAIN APP ============
-function App({ user, onSignOut }) {
+function App({ user, onSignOut, isReadOnly = false }) {
   const { items, loaded, importing, addItem, updateItem, deleteItem, importInitialData } = useDataStore();
   const [view, setView] = useState('table');
   const [search, setSearch] = useState('');
@@ -2753,11 +2759,13 @@ function App({ user, onSignOut }) {
               <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}
                 title="Table view">☰</button>
             </div>
-            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-              + Add
-            </button>
+            {!isReadOnly && (
+              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                + Add
+              </button>
+            )}
             {/* Tools dropdown */}
-            {TMDB_API_KEY && (
+            {TMDB_API_KEY && !isReadOnly && (
               <div className="tools-desktop-only" style={{position:'relative'}}>
                 {(posterProgress || platformProgress || descProgress) ? (
                   <div style={{
@@ -2968,7 +2976,8 @@ function App({ user, onSignOut }) {
                               {(rec.type !== 'similar' && rec.because) ? rec.reason : ''}
                             </div>
                             <div className="rec-card-actions">
-                              <button className="rec-add-btn" style={{fontSize:14}} onClick={() => {
+                              <button className="rec-add-btn" style={{fontSize:14, opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => {
+                                if (isReadOnly) return;
                                 const priorEntry = items.find(i => i.title.toLowerCase().trim() === rec.title.toLowerCase().trim());
                                 setShowForm({
                                   title: rec.title,
@@ -2983,8 +2992,8 @@ function App({ user, onSignOut }) {
                                 });
                                 pendingRecDismiss.current = rec.key;
                               }}>➕</button>
-                              <button className="rec-dismiss-btn" title="Remind me later" onClick={() => snoozeRec(rec.key)}>💤</button>
-                              <button className="rec-dismiss-btn" title="Never show again" onClick={() => dismissRec(rec.key)}>❌</button>
+                              <button className="rec-dismiss-btn" title="Remind me later" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; snoozeRec(rec.key); }}>💤</button>
+                              <button className="rec-dismiss-btn" title="Never show again" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; dismissRec(rec.key); }}>❌</button>
                             </div>
                           </div>
                         </div>
@@ -3231,9 +3240,9 @@ function App({ user, onSignOut }) {
                     );
                   }
                   if (row._type === 'child') {
-                    return <ContentTableRow key={`${row.id}-${row.season}-child`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} />;
+                    return <ContentTableRow key={`${row.id}-${row.season}-child`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} isReadOnly={isReadOnly} />;
                   }
-                  return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} />;
+                  return <ContentTableRow key={`${row.id}-${row.season}`} item={row} onClick={handleCardClick} inlineEdit={inlineEdit} setInlineEdit={setInlineEdit} onUpdate={updateItem} isReadOnly={isReadOnly} />;
                 })}
               </tbody>
             </table>
@@ -3250,11 +3259,11 @@ function App({ user, onSignOut }) {
       </div>
 
       {/* Modals */}
-      {showForm && (
+      {showForm && !isReadOnly && (
         <FormModal item={showForm !== true ? showForm : null} onSave={handleAdd} onClose={() => { setShowForm(false); pendingRecDismiss.current = null; }} />
       )}
 
-      {editItem && (
+      {editItem && !isReadOnly && (
         <FormModal item={editItem} isEdit onSave={handleEdit}
           onClose={() => setEditItem(null)} />
       )}
@@ -3263,7 +3272,8 @@ function App({ user, onSignOut }) {
         <DetailModal item={detailItem} onClose={() => setDetailItem(null)}
           onEdit={(item) => { setDetailItem(null); setEditItem(item); }}
           onDelete={handleDelete}
-          onAddNextSeason={handleAddNextSeason} />
+          onAddNextSeason={handleAddNextSeason}
+          isReadOnly={isReadOnly} />
       )}
 
       {/* Dupes modal */}
