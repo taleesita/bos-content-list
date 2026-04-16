@@ -1246,7 +1246,7 @@ function useTMDBSearch() {
   const [loading, setLoading] = useState(false);
   const timeoutRef = useRef(null);
 
-  const search = useCallback((query, type) => {
+  const search = useCallback((query) => {
     if (!TMDB_API_KEY || !query || query.length < 2) {
       setResults([]);
       return;
@@ -1255,12 +1255,16 @@ function useTMDBSearch() {
     timeoutRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const mediaType = type === 'movie' ? 'movie' : 'tv';
+        // multi search returns both movies and TV shows
         const res = await fetch(
-          `https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`
+          `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`
         );
         const data = await res.json();
-        setResults((data.results || []).slice(0, 6));
+        // Filter to only movies and TV, drop people/other
+        const filtered = (data.results || [])
+          .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
+          .slice(0, 8);
+        setResults(filtered);
       } catch(e) {
         setResults([]);
       }
@@ -1406,7 +1410,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     const val = e.target.value;
     set('title', val);
     if (val.length >= 2) {
-      tmdb.search(val, form.type);
+      tmdb.search(val);
       setShowTMDB(true);
     } else {
       setShowTMDB(false);
@@ -1417,7 +1421,10 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     const title = result.title || result.name || '';
     const posterPath = result.poster_path ? TMDB_IMG_BASE + result.poster_path : '';
     const releaseDate = result.release_date || result.first_air_date || '';
+    // Auto-set type from TMDB media_type
+    const mediaType = result.media_type === 'movie' ? 'movie' : 'tv';
     set('title', title);
+    set('type', mediaType);
     set('posterUrl', posterPath);
     set('tmdbId', result.id);
     if (releaseDate) set('releaseDate', releaseDate);
@@ -1425,10 +1432,9 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     setShowTMDB(false);
     tmdb.clear();
     // Auto-fill network from watch providers
-    const provider = await fetchProviders(result.id, form.type);
+    const provider = await fetchProviders(result.id, mediaType);
     if (provider) set('network', provider);
     // For TV shows, fetch seasons list
-    const mediaType = (result.media_type || form.type) === 'movie' ? 'movie' : 'tv';
     if (mediaType === 'tv') {
       setLoadingSeasons(true);
       try {
@@ -1483,7 +1489,15 @@ function FormModal({ item, onSave, onClose, isEdit }) {
                         {r.poster_path && <img src={TMDB_IMG_BASE + r.poster_path} alt="" />}
                         <div className="tmdb-item-info">
                           <div className="tmdb-item-title">{r.title || r.name}</div>
-                          <div className="tmdb-item-year">{(r.release_date || r.first_air_date || '').slice(0,4)}</div>
+                          <div className="tmdb-item-year">
+                            {(r.release_date || r.first_air_date || '').slice(0,4)}
+                            <span style={{marginLeft:6, fontSize:9, padding:'1px 5px', borderRadius:4,
+                              background: r.media_type === 'movie' ? 'rgba(79,195,247,0.15)' : 'rgba(171,71,188,0.15)',
+                              color: r.media_type === 'movie' ? 'var(--accent-blue)' : 'var(--accent-purple)',
+                              fontWeight:700, textTransform:'uppercase', letterSpacing:0.5}}>
+                              {r.media_type === 'movie' ? '🎬 Movie' : '📺 TV'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1553,7 +1567,12 @@ function FormModal({ item, onSave, onClose, isEdit }) {
                 <label>Network <span className="required">*</span></label>
                 <select className="form-select" value={form.network} onChange={e => set('network', e.target.value)}>
                   <option value="">Select...</option>
-                  {NETWORK_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                  <optgroup label="Your subscriptions">
+                    {MY_SUBS.map(n => <option key={n} value={n}>{n}</option>)}
+                  </optgroup>
+                  <optgroup label="Other">
+                    {NETWORK_OPTIONS.filter(n => !MY_SUBS.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
+                  </optgroup>
                 </select>
               </div>
 
@@ -1605,7 +1624,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
                       <input className="form-input" value={form.posterSearchQuery ?? form.title}
                         onChange={e => {
                           set('posterSearchQuery', e.target.value);
-                          if (e.target.value.length >= 2) { tmdb.search(e.target.value, form.type); setShowTMDB(true); }
+                          if (e.target.value.length >= 2) { tmdb.search(e.target.value); setShowTMDB(true); }
                           else { setShowTMDB(false); }
                         }}
                         placeholder="Search TMDB for a poster..." />
@@ -2063,7 +2082,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
   const [view, setView] = useState('table');
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('unwatched');
-  const [filterType, setFilterType] = useState('all');
+  const [filterTypes, setFilterTypes] = useState([]); // empty = all
   const [filterWho, setFilterWho] = useState('all');
   const [filterNetworks, setFilterNetworks] = useState([]); // array, empty = all
   const [filterRating, setFilterRating] = useState('all');
@@ -2351,9 +2370,16 @@ function App({ user, onSignOut, isReadOnly = false }) {
     }
 
     // ── 2. SIMILAR CONTENT ───────────────────────────────────────────────
-    // Seed from 4★+ rated items; dedupe aggressively
+    // Seed from 4★+ rated items the current user has watched
+    const EMAIL_TO_WHO = {
+      'taly.matiteyahu@gmail.com': 'taly',
+      'doug.pickard@gmail.com': 'doug',
+    };
+    const myWho = EMAIL_TO_WHO[user?.email] || null;
+    // Only include seeds the current user actually watched (their own or together)
     const seeds = [...items]
-      .filter(i => i.rating >= 3.5 && i.tmdbId)
+      .filter(i => i.rating >= 3.5 && i.tmdbId &&
+        (!myWho || i.who === myWho || i.who === 'together' || i.who === 'separately'))
       .sort((a, b) => b.rating - a.rating || (b.ratedDate||'').localeCompare(a.ratedDate||''))
       .slice(0, 20);
 
@@ -2511,7 +2537,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
     setRecs([...filtered]);
     setRecsLoading(false);
-  }, [items]);
+  }, [items, user]);
 
   // Auto-fetch recs on mount (banner defaults open)
   useEffect(() => {
@@ -2554,13 +2580,13 @@ function App({ user, onSignOut, isReadOnly = false }) {
       }
     }
 
-    if (filterType !== 'all') result = result.filter(i => i.type === filterType);
+    if (filterTypes.length > 0) result = result.filter(i => filterTypes.includes(i.type));
     if (filterWho !== 'all') result = result.filter(i => i.who === filterWho);
     if (filterNetworks.length > 0) result = result.filter(i => filterNetworks.includes(i.network));
 
     if (filterRating !== 'all') {
       const r = parseFloat(filterRating);
-      result = result.filter(i => i.rating === r);
+      result = result.filter(i => i.rating >= r);
     }
 
     // Status sort order: watching > watching_airing > watching_gap > want_to_watch > watched > dont_watch
@@ -2598,7 +2624,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
     });
 
     return result;
-  }, [items, search, filterStatus, filterType, filterWho, filterNetworks, filterRating, sortBy, sortDir]);
+  }, [items, search, filterStatus, filterTypes, filterWho, filterNetworks, filterRating, sortBy, sortDir]);
 
   const displayed = filtered.slice(0, displayCount);
 
@@ -2677,6 +2703,33 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
   const handleAddNextSeason = async (item) => {
     const nextSeason = (parseInt(item.season) || 0) + 1;
+
+    // Try to pull release date, poster, and overview from TMDB for the next season
+    let releaseDate = '';
+    let posterUrl = item.posterUrl || '';
+    let overview = '';
+    let tmdbId = item.tmdbId || null;
+
+    if (TMDB_API_KEY) {
+      try {
+        // Resolve tmdbId via search if missing
+        if (!tmdbId) {
+          const sr = await fetch(`https://api.themoviedb.org/3/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}`);
+          const sd = await sr.json();
+          tmdbId = sd.results?.[0]?.id || null;
+        }
+        if (tmdbId) {
+          const res = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+          const data = await res.json();
+          const seasonData = (data.seasons || []).find(s => s.season_number === nextSeason);
+          if (seasonData?.air_date) releaseDate = seasonData.air_date;
+          if (seasonData?.poster_path) posterUrl = TMDB_IMG_BASE + seasonData.poster_path;
+          else if (data.poster_path && !posterUrl) posterUrl = TMDB_IMG_BASE + data.poster_path;
+          if (seasonData?.overview) overview = seasonData.overview;
+        }
+      } catch(e) {}
+    }
+
     const newItem = {
       title: item.title,
       type: item.type,
@@ -2686,15 +2739,15 @@ function App({ user, onSignOut, isReadOnly = false }) {
       network: item.network || '',
       who: item.who || '',
       nonFree: item.nonFree || false,
-      posterUrl: item.posterUrl || '',
-      tmdbId: item.tmdbId || null,
+      posterUrl,
+      tmdbId: tmdbId || null,
       rating: 0,
       ratedDate: '',
-      releaseDate: '',
-      overview: '',
+      releaseDate,
+      overview,
     };
     const { firestoreId } = await addItem(newItem);
-    showToast(`✅ Added ${item.title} S${nextSeason}`, {
+    showToast(`✅ Added ${item.title} S${nextSeason}${releaseDate ? ` · ${releaseDate}` : ''}`, {
       onUndo: async () => {
         await db.collection('content').doc(firestoreId).delete();
       }
@@ -3022,7 +3075,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
         {/* Mobile filter toggle */}
         <div className="filter-mobile-bar" onClick={() => setFiltersOpen(f => !f)}>
           <span style={{fontSize:13, fontWeight:600, color:'var(--text-secondary)'}}>
-            🎛 Filters {(filterStatus!=='unwatched'||filterType!=='all'||filterWho!=='all'||filterNetworks.length>0||filterRating!=='all') && <span style={{color:'var(--accent-gold)'}}>●</span>}
+            🎛 Filters {(filterStatus!=='unwatched'||filterTypes.length>0||filterWho!=='all'||filterNetworks.length>0||filterRating!=='all') && <span style={{color:'var(--accent-gold)'}}>●</span>}
           </span>
           <span style={{color:'var(--text-muted)', fontSize:12}}>{filtersOpen ? '▲ Hide' : '▼ Show'}</span>
         </div>
@@ -3041,11 +3094,13 @@ function App({ user, onSignOut, isReadOnly = false }) {
             <div className="filter-divider" />
             <div className="filter-section">
               <span className="filter-label">Type</span>
-              <span className={`filter-chip ${filterType==='all'?'active':''}`}
-                onClick={() => { setFilterType('all'); setDisplayCount(60); }}>All</span>
+              {filterTypes.length > 0 && (
+                <span className="filter-chip" style={{borderColor:'var(--text-muted)',color:'var(--text-muted)',fontSize:10}}
+                  onClick={() => { setFilterTypes([]); setDisplayCount(60); }}>All</span>
+              )}
               {TYPE_OPTIONS.map(t => (
-                <span key={t.value} className={`filter-chip ${filterType===t.value?'active':''}`}
-                  onClick={() => { setFilterType(t.value); setDisplayCount(60); }}>{t.emoji}</span>
+                <span key={t.value} className={`filter-chip ${filterTypes.includes(t.value)?'active':''}`}
+                  onClick={() => { setFilterTypes(prev => prev.includes(t.value) ? prev.filter(x => x !== t.value) : [...prev, t.value]); setDisplayCount(60); }}>{t.emoji}</span>
               ))}
             </div>
             <div className="filter-divider" />
@@ -3074,7 +3129,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
               <select value={filterRating} onChange={e => { setFilterRating(e.target.value); setDisplayCount(60); if (e.target.value !== 'all') setFilterStatus('watched'); }}
                 style={{background: filterRating !== 'all' ? 'var(--accent-gold)' : 'var(--bg-secondary)', color: filterRating !== 'all' ? '#000' : 'var(--text-secondary)', border:'1px solid var(--border)', borderRadius:20, padding:'5px 12px', fontSize:12, fontWeight:600, cursor:'pointer', outline:'none'}}>
                 <option value="all">All ratings</option>
-                {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'} ({r})</option>)}
+                {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'}+ ({r}+)</option>)}
               </select>
             </div>
             <div className="filter-divider" />
@@ -3088,7 +3143,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
             {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
               <><div className="filter-divider" />
               <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350',whiteSpace:'nowrap'}}
-                onClick={() => { setFilterStatus('unwatched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
+                onClick={() => { setFilterStatus('unwatched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
                 ✕ Clear filters
               </span></>
             )}
@@ -3108,8 +3163,9 @@ function App({ user, onSignOut, isReadOnly = false }) {
               </div>
               <div>
                 <div className="filter-mobile-label">Type</div>
-                <select className={`filter-mobile-select ${filterType!=='all'?'active':''}`} value={filterType}
-                  onChange={e => { setFilterType(e.target.value); setDisplayCount(60); }}>
+                <select className={`filter-mobile-select ${filterTypes.length>0?'active':''}`}
+                  value={filterTypes.length === 1 ? filterTypes[0] : 'all'}
+                  onChange={e => { e.target.value === 'all' ? setFilterTypes([]) : setFilterTypes([e.target.value]); setDisplayCount(60); }}>
                   <option value="all">All types</option>
                   {TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
@@ -3127,7 +3183,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 <select className={`filter-mobile-select ${filterRating!=='all'?'active':''}`} value={filterRating}
                   onChange={e => { setFilterRating(e.target.value); setDisplayCount(60); if (e.target.value !== 'all') setFilterStatus('watched'); }}>
                   <option value="all">All ratings</option>
-                  {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'} ({r})</option>)}
+                  {[5,4.5,4,3.5,3,2.5,2,1.5,1,0.5].map(r => <option key={r} value={String(r)}>{r%1===0?'★'.repeat(r):'★'.repeat(Math.floor(r))+'½'}+ ({r}+)</option>)}
                 </select>
               </div>
               <div>
@@ -3142,7 +3198,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
               <div style={{display:'flex',alignItems:'flex-end'}}>
                 {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
                   <button className="filter-mobile-select" style={{background:'rgba(239,83,80,0.1)',color:'#ef5350',border:'1px solid #ef5350',fontWeight:600,cursor:'pointer'}}
-                    onClick={() => { setFilterStatus('unwatched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
+                    onClick={() => { setFilterStatus('unwatched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
                     ✕ Clear filters
                   </button>
                 )}
