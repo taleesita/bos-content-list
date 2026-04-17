@@ -2623,6 +2623,13 @@ function App({ user, onSignOut, isReadOnly = false }) {
           const pa = (!a.priority || a.priority === '-' || a.priority === 'n/a') ? 99 : parseInt(a.priority);
           const pb = (!b.priority || b.priority === '-' || b.priority === 'n/a') ? 99 : parseInt(b.priority);
           cmp = pa - pb;
+          if (cmp === 0) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const unrelA = a.releaseDate && new Date(a.releaseDate) > today ? 1 : 0;
+            const unrelB = b.releaseDate && new Date(b.releaseDate) > today ? 1 : 0;
+            cmp = unrelA - unrelB;
+            if (cmp === 0) cmp = a.title.localeCompare(b.title);
+          }
         }
       }
       else if (sortBy === 'title') cmp = a.title.localeCompare(b.title);
@@ -2630,6 +2637,13 @@ function App({ user, onSignOut, isReadOnly = false }) {
         const pa = a.priority === '-' || a.priority === 'n/a' || !a.priority ? 99 : parseInt(a.priority);
         const pb = b.priority === '-' || b.priority === 'n/a' || !b.priority ? 99 : parseInt(b.priority);
         cmp = pa - pb;
+        if (cmp === 0) {
+          const today = new Date(); today.setHours(0,0,0,0);
+          const unrelA = a.releaseDate && new Date(a.releaseDate) > today ? 1 : 0;
+          const unrelB = b.releaseDate && new Date(b.releaseDate) > today ? 1 : 0;
+          cmp = unrelA - unrelB;
+          if (cmp === 0) cmp = a.title.localeCompare(b.title);
+        }
       }
       else if (sortBy === 'rating') cmp = (b.rating || 0) - (a.rating || 0);
       else if (sortBy === 'ratedDate') {
