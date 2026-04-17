@@ -3140,7 +3140,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                   onClick={() => handleSort(s.v)}>{s.l} {sortBy===s.v && (sortDir==='asc'?'↑':'↓')}</span>
               ))}
             </div>
-            {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
+            {(filterStatus !== 'unwatched' || filterTypes.length > 0 || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
               <><div className="filter-divider" />
               <span className="filter-chip" style={{borderColor:'var(--accent-red)',color:'#ef5350',whiteSpace:'nowrap'}}
                 onClick={() => { setFilterStatus('unwatched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
@@ -3196,7 +3196,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 </select>
               </div>
               <div style={{display:'flex',alignItems:'flex-end'}}>
-                {(filterStatus !== 'unwatched' || filterType !== 'all' || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
+                {(filterStatus !== 'unwatched' || filterTypes.length > 0 || filterWho !== 'all' || filterNetworks.length > 0 || filterRating !== 'all' || search || sortBy !== 'status') && (
                   <button className="filter-mobile-select" style={{background:'rgba(239,83,80,0.1)',color:'#ef5350',border:'1px solid #ef5350',fontWeight:600,cursor:'pointer'}}
                     onClick={() => { setFilterStatus('unwatched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}>
                     ✕ Clear filters
