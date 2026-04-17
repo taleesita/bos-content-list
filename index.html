@@ -77,7 +77,7 @@
     padding-top: calc(16px + env(safe-area-inset-top, 0px));
     position: sticky;
     top: 0;
-    z-index: 100;
+    z-index: 200;
   }
 
   .header-inner {
@@ -193,6 +193,9 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     padding: 10px 24px;
+    position: sticky;
+    top: calc(var(--header-h, 80px));
+    z-index: 150;
   }
 
   .stats-inner {
@@ -535,7 +538,8 @@
     border-bottom: 1px solid var(--border);
     background: var(--bg-secondary);
     position: sticky;
-    top: 0;
+    top: var(--table-header-top, 120px);
+    z-index: 10;
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
@@ -2539,6 +2543,18 @@ function App({ user, onSignOut, isReadOnly = false }) {
     setRecsLoading(false);
   }, [items, user]);
 
+  // Keep --table-header-top CSS var in sync so sticky thead lands below header+stats
+  useEffect(() => {
+    const update = () => {
+      const h1 = document.querySelector('.header')?.offsetHeight || 0;
+      const h2 = document.querySelector('.stats-bar')?.offsetHeight || 0;
+      document.documentElement.style.setProperty('--table-header-top', (h1 + h2) + 'px');
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
   // Auto-fetch recs on mount (banner defaults open)
   useEffect(() => {
     if (loaded && recs === null && !recsLoading) fetchRecs();
@@ -2572,7 +2588,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
     if (filterStatus !== 'all') {
       if (filterStatus === 'unwatched') {
-        result = result.filter(i => i.status !== 'watched' && i.status !== 'dont_watch');
+        result = result.filter(i => i.status === 'want_to_watch');
       } else if (filterStatus === 'watching') {
         result = result.filter(i => i.status.startsWith('watching'));
       } else {
@@ -2601,7 +2617,14 @@ function App({ user, onSignOut, isReadOnly = false }) {
         // Sort
     result.sort((a, b) => {
       let cmp = 0;
-      if (sortBy === 'status') cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+      if (sortBy === 'status') {
+        cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+        if (cmp === 0) {
+          const pa = (!a.priority || a.priority === '-' || a.priority === 'n/a') ? 99 : parseInt(a.priority);
+          const pb = (!b.priority || b.priority === '-' || b.priority === 'n/a') ? 99 : parseInt(b.priority);
+          cmp = pa - pb;
+        }
+      }
       else if (sortBy === 'title') cmp = a.title.localeCompare(b.title);
       else if (sortBy === 'priority') {
         const pa = a.priority === '-' || a.priority === 'n/a' || !a.priority ? 99 : parseInt(a.priority);
@@ -2907,11 +2930,11 @@ function App({ user, onSignOut, isReadOnly = false }) {
       {/* Stats */}
       <div className="stats-bar">
         <div className="stats-inner">
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
-          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterType('all'); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('rating'); setSortDir('desc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('all'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.total}</span> total</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watched}</span> watched</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watching'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.watching}</span> watching</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
+          <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('rating'); setSortDir('desc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
           <div className="stat"><span className="stat-num">{stats.avgRating}</span> avg ⭐</div>
           <div className="stat" style={{marginLeft:'auto', color:'var(--text-muted)', fontSize: 11}}>
             Showing {Math.min(displayCount, filtered.length)} of {filtered.length}
@@ -3084,7 +3107,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
           <div className="filter-inner filter-desktop-chips">
             <div className="filter-section">
               <span className="filter-label">Status</span>
-              {[{v:'all',l:'All'},{v:'unwatched',l:'📋 Unwatched'},{v:'watched',l:'✅ Watched'},
+              {[{v:'all',l:'All'},{v:'unwatched',l:'👀 Unwatched'},{v:'watched',l:'✅ Watched'},
                 {v:'watching',l:'👀👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
               ].map(f => (
                 <span key={f.v} className={`filter-chip ${filterStatus===f.v?'active':''}`}
@@ -3156,8 +3179,8 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 <div className="filter-mobile-label">Status</div>
                 <select className={`filter-mobile-select ${filterStatus!=='unwatched'?'active':''}`} value={filterStatus}
                   onChange={e => { setFilterStatus(e.target.value); setDisplayCount(60); }}>
-                  {[{v:'unwatched',l:'📋 Unwatched'},{v:'all',l:'All'},{v:'watched',l:'✅ Watched'},
-                    {v:'watching',l:'👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
+                  {[{v:'unwatched',l:'👀 Unwatched'},{v:'all',l:'All'},{v:'watched',l:'✅ Watched'},
+                    {v:'watching',l:'👀👀 Watching'},{v:'want_to_watch',l:'👀 Want'},{v:'dont_watch',l:'❌ Skip'}
                   ].map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
                 </select>
               </div>
