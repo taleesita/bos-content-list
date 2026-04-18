@@ -820,6 +820,39 @@
   .empty-state-text { font-size: 18px; margin-bottom: 8px; }
   .empty-state-sub { font-size: 14px; }
 
+  /* Global search TMDB suggestions */
+  .search-suggest-label {
+    font-size: 13px; color: var(--text-muted); margin-bottom: 14px; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .search-suggest-grid {
+    display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 700px; margin: 0 auto;
+  }
+  .search-suggest-card {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; cursor: default;
+    width: 300px; text-align: left; transition: border-color 0.15s;
+  }
+  .search-suggest-card:hover { border-color: var(--accent-gold); }
+  .search-suggest-poster {
+    width: 40px; height: 60px; object-fit: cover; border-radius: 4px; flex-shrink: 0;
+    background: var(--bg-tertiary);
+  }
+  .search-suggest-poster-placeholder {
+    width: 40px; height: 60px; border-radius: 4px; flex-shrink: 0;
+    background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: var(--text-muted);
+  }
+  .search-suggest-info { flex: 1; min-width: 0; }
+  .search-suggest-title { font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search-suggest-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .search-suggest-add {
+    background: var(--accent-gold); color: #000; border: none; border-radius: 6px;
+    padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .search-suggest-add:hover { opacity: 0.85; }
+
   /* Pagination / load more */
   .load-more {
     text-align: center;
@@ -2117,6 +2150,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
   const [showForm, setShowForm] = useState(false);
   const pendingRecDismiss = React.useRef(null); // key to dismiss only if form is saved
   const [editItem, setEditItem] = useState(null);
+  const globalTMDB = useTMDBSearch();
   const [detailItem, setDetailItem] = useState(null);
   const [toast, setToast] = useState(null);
   const toastTimerRef = React.useRef(null);
@@ -2153,6 +2187,15 @@ function App({ user, onSignOut, isReadOnly = false }) {
   }, []);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
+
+  // Global search → TMDB suggestions when no local results
+  useEffect(() => {
+    if (search && search.length >= 2) {
+      globalTMDB.search(search);
+    } else {
+      globalTMDB.clear();
+    }
+  }, [search]);
 
   const fetchAllPosters = useCallback(async () => {
     const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
@@ -3284,9 +3327,68 @@ function App({ user, onSignOut, isReadOnly = false }) {
       <div className="content-area">
         {filtered.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🎬</div>
-            <div className="empty-state-text">No content found</div>
-            <div className="empty-state-sub">Try adjusting your filters or search</div>
+            {search && globalTMDB.results.length > 0 && !isReadOnly ? (
+              <>
+                <div className="empty-state-icon">🔍</div>
+                <div className="empty-state-text">"{search}" isn't in your list yet</div>
+                <div className="empty-state-sub" style={{marginBottom: 20}}>Want to add one of these?</div>
+                <div className="search-suggest-grid">
+                  {globalTMDB.results.slice(0, 6).map(r => {
+                    const mediaType = r.media_type === 'movie' ? 'movie' : 'tv';
+                    const year = (r.release_date || r.first_air_date || '').slice(0, 4);
+                    const typeLabel = mediaType === 'movie' ? '🎬 Movie' : '📺 TV';
+                    return (
+                      <div key={r.id} className="search-suggest-card">
+                        {r.poster_path
+                          ? <img className="search-suggest-poster" src={TMDB_IMG_BASE + r.poster_path} alt="" />
+                          : <div className="search-suggest-poster-placeholder">🎬</div>
+                        }
+                        <div className="search-suggest-info">
+                          <div className="search-suggest-title">{r.title || r.name}</div>
+                          <div className="search-suggest-meta">{year && `${year} · `}{typeLabel}</div>
+                        </div>
+                        <button className="search-suggest-add" onClick={async () => {
+                          const posterPath = r.poster_path ? TMDB_IMG_BASE + r.poster_path : '';
+                          const releaseDate = r.release_date || r.first_air_date || '';
+                          const formData = {
+                            title: r.title || r.name || '',
+                            type: mediaType,
+                            posterUrl: posterPath,
+                            tmdbId: r.id,
+                            releaseDate,
+                            overview: r.overview || '',
+                            status: 'want_to_watch',
+                            priority: '1',
+                            season: mediaType === 'tv' ? '1' : '',
+                          };
+                          // Fetch network from providers, fall back to show networks
+                          const provider = await fetchProviders(r.id, mediaType);
+                          if (provider) formData.network = provider;
+                          if (!provider && mediaType === 'tv') {
+                            try {
+                              const tvData = await fetch(`https://api.themoviedb.org/3/tv/${r.id}?api_key=${TMDB_API_KEY}`).then(x => x.json());
+                              for (const net of (tvData.networks || [])) {
+                                const mapped = TMDB_NETWORK_NAME_MAP[net.name];
+                                if (mapped) { formData.network = mapped; break; }
+                              }
+                            } catch(e) {}
+                          }
+                          setSearch('');
+                          globalTMDB.clear();
+                          setShowForm(formData);
+                        }}>➕ Add</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="empty-state-icon">🎬</div>
+                <div className="empty-state-text">No content found</div>
+                <div className="empty-state-sub">Try adjusting your filters or search</div>
+              </>
+            )}
           </div>
         ) : view === 'grid' ? (
           <>
