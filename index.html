@@ -1063,14 +1063,14 @@ const NETWORK_OPTIONS = [
   'ABC','Amazon Prime','AMC','Apple','BBC','Bravo','CBS','Comedy Central',
   'Disney','Fox','Freevee','FX','HBO / Max','HGTV','Hulu','Izzy','NBC',
   'Netflix','Paramount Plus','PBS','Peacock','Pluto','Sci-fi','Starz',
-  'Tubi','TVNZ','USA','Warner Bros','Youtube'
+  'Dropout TV','Tubi','TVNZ','USA','Warner Bros','Youtube'
 ];
 
 const TMDB_API_KEY = '761b5bdc298a53e848abbc17ce7f81a3';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
 
 // Platforms you subscribe to — shown first in dropdowns
-const MY_SUBS = ['Netflix', 'Apple', 'Amazon Prime', 'Hulu', 'Disney', 'HBO / Max', 'Izzy'];
+const MY_SUBS = ['Netflix', 'Apple', 'Amazon Prime', 'Hulu', 'Disney', 'HBO / Max', 'Izzy', 'Dropout TV'];
 
 // TMDB network/company IDs for MY_SUBS — used to discover new shows on your platforms
 const MY_SUBS_TMDB_IDS = {
@@ -1081,6 +1081,7 @@ const MY_SUBS_TMDB_IDS = {
   'Disney': [2739, 19],
   'HBO / Max': [49, 3186],
   'Izzy': [], // TMDB network ID TBD
+  'Dropout TV': [4551],
 };
 
 // Map TMDB provider names → our network labels
