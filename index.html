@@ -1102,6 +1102,20 @@ const PROVIDER_MAP = {
   'Fox': 'Fox', 'Comedy Central': 'Comedy Central', 'Bravo': 'Bravo',
   'HGTV': 'HGTV', 'Sci-Fi': 'Sci-fi', 'Warner Bros': 'Warner Bros',
   'Izzy': 'Izzy', 'YES+': 'Izzy', 'Yes+': 'Izzy',
+  'Dropout': 'Dropout TV', 'Dropout TV': 'Dropout TV',
+};
+
+// Map TMDB network names → our network labels (used as fallback when watch providers don't match)
+const TMDB_NETWORK_NAME_MAP = {
+  'Netflix': 'Netflix', 'Amazon': 'Amazon Prime', 'Amazon Prime Video': 'Amazon Prime',
+  'Disney+': 'Disney', 'Disney Plus': 'Disney', 'Disney Channel': 'Disney',
+  'Apple TV+': 'Apple', 'Hulu': 'Hulu', 'HBO': 'HBO / Max', 'Max': 'HBO / Max',
+  'Peacock': 'Peacock', 'Paramount+': 'Paramount Plus', 'Paramount Network': 'Paramount Plus',
+  'AMC': 'AMC', 'Starz': 'Starz', 'BBC': 'BBC', 'BBC One': 'BBC', 'BBC Two': 'BBC',
+  'Tubi TV': 'Tubi', 'Pluto TV': 'Pluto', 'YouTube': 'Youtube', 'FX': 'FX',
+  'NBC': 'NBC', 'ABC': 'ABC', 'CBS': 'CBS', 'Fox': 'Fox', 'Comedy Central': 'Comedy Central',
+  'Bravo': 'Bravo', 'HGTV': 'HGTV', 'USA Network': 'USA', 'Freevee': 'Freevee',
+  'Dropout': 'Dropout TV',
 };
 
 // Fetch streaming providers for a TMDB id+type, returns our network label or null
@@ -1439,7 +1453,7 @@ function FormModal({ item, onSave, onClose, isEdit }) {
     // Auto-fill network from watch providers
     const provider = await fetchProviders(result.id, mediaType);
     if (provider) set('network', provider);
-    // For TV shows, fetch seasons list
+    // For TV shows, fetch seasons list + network fallback
     if (mediaType === 'tv') {
       setLoadingSeasons(true);
       try {
@@ -1447,6 +1461,13 @@ function FormModal({ item, onSave, onClose, isEdit }) {
         const tvData = await tvRes.json();
         const seasons = (tvData.seasons || []).filter(s => s.season_number > 0);
         setTmdbSeasons(seasons);
+        // If watch providers didn't match, try mapping from the show's networks array
+        if (!provider && tvData.networks?.length) {
+          for (const net of tvData.networks) {
+            const mapped = TMDB_NETWORK_NAME_MAP[net.name];
+            if (mapped) { set('network', mapped); break; }
+          }
+        }
       } catch(e) { setTmdbSeasons([]); }
       setLoadingSeasons(false);
     } else {
