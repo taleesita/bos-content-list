@@ -1173,6 +1173,17 @@ const PRIORITY_COLORS = { '1': '#f5c518', '2': '#c8852a', '3': '#8888aa', '4': '
 const getPriorityColor = (p) => PRIORITY_COLORS[p] || 'var(--text-muted)';
 const formatSeason = (s) => s ? `S${s}` : '—';
 
+const TITLE_LOWER_WORDS = new Set(['a','an','the','and','but','or','for','nor','on','at','to','by','in','of','up','as','is','it','vs','via']);
+function toTitleCase(str) {
+  if (!str) return str;
+  return str.split(' ').map((word, i) => {
+    if (!word) return word;
+    if (word === word.toUpperCase() && word.length > 1 && /[A-Z]/.test(word)) return word; // preserve acronyms
+    if (i > 0 && TITLE_LOWER_WORDS.has(word.toLowerCase())) return word.toLowerCase();
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(' ');
+}
+
 const getStatusBadgeClass = (status) => {
   if (status === 'watched') return 'badge-watched';
   if (status.startsWith('watching')) return 'badge-watching';
@@ -1984,8 +1995,6 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
           </select>
         ) : <span className="editable-cell card-network">{item.network || '—'}</span>}
       </td>
-      {/* Rating — always interactive */}
-      <td><InlineStarRating value={item.rating} onChange={val => onUpdate(item.id, {rating: val})} /></td>
       {/* Release Date */}
       <td onClick={(e) => startEdit(e, 'releaseDate')}>
         {editing('releaseDate') ? (
@@ -2005,6 +2014,15 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
           </span>
         )}
       </td>
+      {/* Rating — always interactive */}
+      <td><InlineStarRating value={item.rating} onChange={val => {
+        const updates = { rating: val };
+        if (val > 0 && item.status === 'want_to_watch') {
+          updates.status = 'watched';
+          updates.ratedDate = new Date().toLocaleDateString('en-US');
+        }
+        onUpdate(item.id, updates);
+      }} /></td>
       {/* Rated Date */}
       <td onClick={(e) => startEdit(e, 'ratedDate')}>
         {editing('ratedDate') ? (
@@ -2175,9 +2193,10 @@ function App({ user, onSignOut, isReadOnly = false }) {
   const [platformProgress, setPlatformProgress] = useState(null);
   const [descProgress, setDescProgress] = useState(null);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [showDupesModal, setShowDupesModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [showRecs, setShowRecs] = useState(true);
+  const [showRecs, setShowRecs] = useState(() => typeof window !== 'undefined' ? window.innerWidth > 768 : true);
   const [recs, setRecs] = useState(null); // null=not fetched, []|[...]=fetched
   const [recsLoading, setRecsLoading] = useState(false);
   const [recsVisible, setRecsVisible] = useState(10);
@@ -2794,15 +2813,25 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
   // Handlers
   const handleAdd = (formData) => {
-    addItem(formData);
+    const normalized = { ...formData, title: toTitleCase(formData.title) };
+    if (normalized.rating > 0 && normalized.status === 'want_to_watch') {
+      normalized.status = 'watched';
+      if (!normalized.ratedDate) normalized.ratedDate = new Date().toLocaleDateString('en-US');
+    }
+    addItem(normalized);
     if (pendingRecDismiss.current) { dismissRec(pendingRecDismiss.current); pendingRecDismiss.current = null; }
-    showToast(`🎬 "${formData.title}" added to your list!`);
+    showToast(`🎬 "${normalized.title}" added to your list!`);
   };
 
   const handleEdit = (formData) => {
-    updateItem(formData.id, formData);
+    const normalized = { ...formData, title: toTitleCase(formData.title) };
+    if (normalized.rating > 0 && normalized.status === 'want_to_watch') {
+      normalized.status = 'watched';
+      if (!normalized.ratedDate) normalized.ratedDate = new Date().toLocaleDateString('en-US');
+    }
+    updateItem(normalized.id, normalized);
     setEditItem(null);
-    showToast(`✏️ "${formData.title}" updated!`);
+    showToast(`✏️ "${normalized.title}" updated!`);
   };
 
   const handleDelete = (id) => {
@@ -2986,13 +3015,27 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 )}
               </div>
             )}
-            <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:4}}>
-              {user?.photoURL && (
-                <img src={user.photoURL} alt={user.displayName}
-                  style={{width:32,height:32,borderRadius:'50%',border:'2px solid var(--border)'}} />
+            <div style={{position:'relative',marginLeft:4}}>
+              <button onClick={() => setShowUserMenu(p => !p)} title="Account"
+                style={{background:'none',border:'1px solid var(--border)',borderRadius:8,padding:'4px 8px',
+                  cursor:'pointer',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:6}}>
+                {user?.photoURL
+                  ? <img src={user.photoURL} alt="" style={{width:26,height:26,borderRadius:'50%'}} />
+                  : <span style={{fontSize:18}}>⚙️</span>}
+                <span style={{fontSize:11,color:'var(--text-muted)'}}>▾</span>
+              </button>
+              {showUserMenu && (
+                <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'var(--bg-secondary)',
+                  border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',minWidth:210,zIndex:1000,
+                  boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10,paddingBottom:8,borderBottom:'1px solid var(--border)',lineHeight:1.5}}>
+                    Signed in as<br/>
+                    <strong style={{color:'var(--text-primary)',fontSize:13}}>{user.displayName || user.email}</strong>
+                  </div>
+                  <button className="btn btn-secondary" style={{width:'100%',fontSize:13,textAlign:'left'}}
+                    onClick={() => { setShowUserMenu(false); onSignOut(); }}>Sign out</button>
+                </div>
               )}
-              <button className="btn btn-secondary btn-sm" onClick={onSignOut}
-                title="Sign out" style={{fontSize:12}}>Sign out</button>
             </div>
           </div>
         </div>
@@ -3023,6 +3066,15 @@ function App({ user, onSignOut, isReadOnly = false }) {
           <div className="stat clickable-stat" onClick={() => { setFilterStatus('want_to_watch'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('status'); setSortDir('asc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.wantToWatch}</span> to watch</div>
           <div className="stat clickable-stat" onClick={() => { setFilterStatus('watched'); setFilterTypes([]); setFilterWho('all'); setFilterNetworks([]); setFilterRating('all'); setSortBy('rating'); setSortDir('desc'); setSearch(''); setDisplayCount(60); }}><span className="stat-num">{stats.rated}</span> rated</div>
           <div className="stat"><span className="stat-num">{stats.avgRating}</span> avg ⭐</div>
+          {TMDB_API_KEY && (
+            <div className="stat clickable-stat" onClick={toggleRecs} title="Toggle recommendations">
+              💡 Recs
+              {recs !== null && !recsLoading && (() => {
+                const n = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now())).length;
+                return n > 0 ? <span className="recs-badge" style={{marginLeft:4,fontSize:10}}>{n}</span> : null;
+              })()}
+            </div>
+          )}
           <div className="stat" style={{marginLeft:'auto', color:'var(--text-muted)', fontSize: 11}}>
             Showing {Math.min(displayCount, filtered.length)} of {filtered.length}
           </div>
@@ -3426,8 +3478,8 @@ function App({ user, onSignOut, isReadOnly = false }) {
                   <th>Season</th>
                   <th>Who</th>
                   <th onClick={() => handleSort('network')}>Network <SortArrow field="network" /></th>
-                  <th onClick={() => handleSort('rating')}>Rating <SortArrow field="rating" /></th>
                   <th onClick={() => handleSort('releaseDate')}>Release <SortArrow field="releaseDate" /></th>
+                  <th onClick={() => handleSort('rating')}>Rating <SortArrow field="rating" /></th>
                   <th onClick={() => handleSort('ratedDate')}>Rated <SortArrow field="ratedDate" /></th>
                   <th>Non-Free</th>
                 </tr>
