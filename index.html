@@ -506,14 +506,13 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: rgba(0,0,0,0.7);
-    border: 1.5px solid var(--accent-gold);
+    background: rgba(0,0,0,0.75);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 11px;
     font-weight: 700;
-    color: var(--accent-gold);
+    /* color and border set inline per priority */
   }
 
   /* Table view */
@@ -1170,6 +1169,10 @@ async function fetchProviders(tmdbId, type) {
 }
 
 // ============ HELPER FUNCTIONS ============
+const PRIORITY_COLORS = { '1': '#f5c518', '2': '#c8852a', '3': '#8888aa', '4': '#666677', '5': '#555566' };
+const getPriorityColor = (p) => PRIORITY_COLORS[p] || 'var(--text-muted)';
+const formatSeason = (s) => s ? `S${s}` : '—';
+
 const getStatusBadgeClass = (status) => {
   if (status === 'watched') return 'badge-watched';
   if (status.startsWith('watching')) return 'badge-watching';
@@ -1803,11 +1806,11 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadO
 
           <div className="detail-field">
             <span className="detail-field-label">Priority</span>
-            <span className="detail-field-value">{item.priority || '—'}</span>
+            <span className="detail-field-value" style={{color: getPriorityColor(item.priority), fontWeight: 700}}>{item.priority || '—'}</span>
           </div>
           <div className="detail-field">
             <span className="detail-field-label">Season</span>
-            <span className="detail-field-value">{item.season || '—'}</span>
+            <span className="detail-field-value">{formatSeason(item.season)}</span>
           </div>
           <div className="detail-field">
             <span className="detail-field-label">Network</span>
@@ -1866,7 +1869,7 @@ function ContentCard({ item, onClick }) {
           <span className="placeholder-icon">{getPlaceholderIcon(item.type)}</span>
         )}
         {item.priority && item.priority !== '-' && item.priority !== 'n/a' && (
-          <div className="card-priority">{item.priority}</div>
+          <div className="card-priority" style={{color: getPriorityColor(item.priority), border: `1.5px solid ${getPriorityColor(item.priority)}`}}>{item.priority}</div>
         )}
         <div className={`card-status-badge ${getStatusBadgeClass(item.status)}`}>
           {getStatusLabel(item.status)}
@@ -1943,7 +1946,7 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
             onBlur={cancel} onClick={e => e.stopPropagation()}>
             {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
-        ) : <span className="editable-cell">{item.priority !== '' && item.priority !== 'n/a' ? item.priority : '—'}</span>}
+        ) : <span className="editable-cell" style={{color: getPriorityColor(item.priority), fontWeight: item.priority && item.priority !== '-' && item.priority !== 'n/a' ? 700 : 'inherit'}}>{item.priority !== '' && item.priority !== 'n/a' ? item.priority : '—'}</span>}
       </td>
       <td>{getTypeEmoji(item.type)}</td>
       {/* Season */}
@@ -1953,7 +1956,7 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
             onBlur={e => save('season', e.target.value)}
             onKeyDown={e => { if (e.key==='Enter') save('season', e.target.value); if (e.key==='Escape') cancel(); }}
             onClick={e => e.stopPropagation()} />
-        ) : <span className="editable-cell">{item.season || '—'}</span>}
+        ) : <span className="editable-cell">{item.season ? formatSeason(item.season) : '—'}</span>}
       </td>
       {/* Who */}
       <td onClick={(e) => startEdit(e, 'who')}>
