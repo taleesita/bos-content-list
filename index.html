@@ -3147,7 +3147,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                                 setShowForm({
                                   title: rec.title,
                                   type: rec.mediaType === 'movie' ? 'movie' : 'tv',
-                                  season: rec.season ? String(rec.season) : '',
+                                  season: rec.season ? String(rec.season) : (rec.mediaType === 'movie' ? '' : '1'),
                                   status: 'want_to_watch', priority: '1',
                                   network: rec.platform || priorEntry?.network || '', who: priorEntry?.who || 'together',
                                   nonFree: false, posterUrl: rec.posterUrl || '',
