@@ -1434,7 +1434,7 @@ function useDataStore() {
 function FormModal({ item, onSave, onClose, isEdit }) {
   const defaults = {
     title: '', status: 'want_to_watch', priority: '1', type: 'tv',
-    season: '', who: 'together', network: '', rating: 0,
+    season: '1', who: 'together', network: '', rating: 0,
     releaseDate: '', nonFree: false, posterUrl: '', ratedDate: '', overview: '', tmdbId: null,
   };
   const [form, setForm] = useState(item ? { ...defaults, ...item } : defaults);
@@ -1591,7 +1591,12 @@ function FormModal({ item, onSave, onClose, isEdit }) {
               {/* Type */}
               <div className="form-group">
                 <label>Type <span className="required">*</span></label>
-                <select className="form-select" value={form.type} onChange={e => set('type', e.target.value)}>
+                <select className="form-select" value={form.type} onChange={e => {
+                  const t = e.target.value;
+                  set('type', t);
+                  if (t === 'movie') set('season', '');
+                  else if (!form.season) set('season', '1');
+                }}>
                   {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
