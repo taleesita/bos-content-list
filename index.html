@@ -2677,6 +2677,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
   }, [items, user]);
 
   // Keep --table-header-top CSS var in sync so sticky thead lands below header+stats
+  // ResizeObserver fires immediately when toolbar actually changes size (e.g. filters open/close)
   useEffect(() => {
     const update = () => {
       const h1 = document.querySelector('.header')?.offsetHeight || 0;
@@ -2687,10 +2688,16 @@ function App({ user, onSignOut, isReadOnly = false }) {
       document.documentElement.style.setProperty('--table-header-top', (h1 + h2 + h3) + 'px');
     };
     update();
-    const timer = setTimeout(update, 50);
+    const ro = new ResizeObserver(update);
+    const toolbar = document.querySelector('.toolbar-bar');
+    const header = document.querySelector('.header');
+    const statsBar = document.querySelector('.stats-bar');
+    if (toolbar) ro.observe(toolbar);
+    if (header) ro.observe(header);
+    if (statsBar) ro.observe(statsBar);
     window.addEventListener('resize', update);
-    return () => { window.removeEventListener('resize', update); clearTimeout(timer); };
-  }, [filtersOpen]);
+    return () => { ro.disconnect(); window.removeEventListener('resize', update); };
+  }, []);
 
   // Auto-fetch recs on mount (banner defaults open)
   useEffect(() => {
