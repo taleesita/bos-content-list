@@ -533,7 +533,12 @@
   /* Table view */
   .table-view {
     width: 100%;
-    overflow-x: auto;
+    /* No overflow here — keeps position:sticky on th relative to the viewport, not this container */
+  }
+
+  .table-scroll-wrap {
+    overflow-x: auto; /* horizontal scroll lives here, not on .table-view */
+    width: 100%;
   }
 
   .table-view table {
@@ -3561,6 +3566,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
           </>
         ) : (
           <div className="table-view">
+            <div className="table-scroll-wrap">
             <table>
               <thead>
                 <tr>
@@ -3618,6 +3624,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 })}
               </tbody>
             </table>
+            </div>
             {displayCount < filtered.length && (
               <div className="load-more">
                 <button className="btn btn-secondary"
