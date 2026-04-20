@@ -3062,6 +3062,163 @@ function App({ user, onSignOut, isReadOnly = false }) {
         </div>
       </div>
 
+
+      {/* ── RECS PANEL ── */}
+      {TMDB_API_KEY && (
+        <div className="recs-bar">
+          <div className="recs-toggle" onClick={toggleRecs}>
+            <span className="recs-toggle-label">
+              💡 Recommendations
+              {recs !== null && !recsLoading && (() => {
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
+                return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null;
+              })()}
+              {recsLoading && <span style={{fontSize:12,color:'var(--accent-gold)',fontFamily:'Inter',fontWeight:400,letterSpacing:0}}>fetching…</span>}
+            </span>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              {showRecs && dismissedRecs.size > 0 && (
+                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
+                  onClick={(e) => { e.stopPropagation(); setShowRestorePanel(p => !p); }}>
+                  ↩ Dismissed ({dismissedRecs.size})
+                </span>
+              )}
+              {showRecs && recs !== null && !recsLoading && (
+                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
+                  title="Re-fetches TMDB for new upcoming seasons & fresh recommendations"
+                  onClick={(e) => { e.stopPropagation(); setRecs(null); setRecsVisible(10); fetchRecs(); }}>
+                  🔄 Refresh
+                </span>
+              )}
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
+            </div>
+          </div>
+
+          {showRecs && showRestorePanel && recs && dismissedRecs.size > 0 && (
+            <div style={{margin:'0 0 10px 0',background:'var(--bg-secondary)',borderRadius:10,padding:'10px 12px',border:'1px solid var(--border)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>Dismissed recommendations</span>
+                <span style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer'}} onClick={() => setShowRestorePanel(false)}>✕</span>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                {recs.filter(r => dismissedRecs.has(r.key)).map(r => (
+                  <div key={r.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'5px 8px',background:'var(--bg-card)',borderRadius:7,border:'1px solid var(--border)'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.title}{r.season ? ` S${r.season}` : ''}</div>
+                      <div style={{fontSize:10,color:'var(--accent-gold)'}}>{r.because || r.reason}</div>
+                    </div>
+                    <button onClick={() => {
+                      setDismissedRecs(prev => {
+                         const next = new Set(prev); next.delete(r.key);
+                         const newData = {}; next.forEach(k => { newData[k] = true; });
+                         db.collection('settings').doc('rec_dismissed').set(newData).catch(() => {});
+                         return next;
+                       });
+                    }} style={{flexShrink:0,fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid var(--accent-gold)',background:'transparent',color:'var(--accent-gold)',cursor:'pointer',fontWeight:600}}>
+                      Restore
+                    </button>
+                  </div>
+                ))}
+                {recs.filter(r => dismissedRecs.has(r.key)).length === 0 && (
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>Nothing left to restore.</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {showRecs && (
+            <div style={{paddingBottom:4}}>
+              {recsLoading && (
+                <div style={{padding:'12px 0',color:'var(--text-muted)',fontSize:13,display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>
+                  Checking TMDB for upcoming seasons &amp; recommendations…
+                </div>
+              )}
+              {recs !== null && (() => {
+                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
+                if (!recsLoading && !visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
+                const page = visible.slice(0, recsVisible);
+                const hasMore = visible.length > recsVisible;
+                return (<>
+                  <div className="recs-scroll">
+                    {page.map(rec => {
+                      const onMySub = MY_SUBS.includes(rec.platform);
+                      const isExpanded = expandedRec === rec.key;
+                      const badgeClass = rec.type === 'upcoming' ? 'rec-badge-upcoming' : rec.type === 'new' ? 'rec-badge-new' : 'rec-badge-similar';
+                      const badgeLabel = rec.type === 'upcoming' ? '📅 NEW SEASON' : rec.type === 'new' ? '🆕 NEW' : '✨ FOR YOU';
+                      return (
+                        <div key={rec.key} className="rec-card">
+                          <div className="rec-card-poster" style={{cursor: rec.overview ? 'pointer' : 'default'}}
+                            onClick={() => rec.overview && setExpandedRec(isExpanded ? null : rec.key)}>
+                            {rec.posterUrl
+                              ? <img src={rec.posterUrl} alt={rec.title} loading="lazy" />
+                              : <span style={{fontSize:32,opacity:0.3}}>{rec.mediaType === 'movie' ? '🎥' : '📺'}</span>
+                            }
+                            <span className={`rec-card-badge ${badgeClass}`}>{badgeLabel}</span>
+                            {isExpanded && rec.overview && (
+                              <div className="rec-desc-overlay" style={{overflowY:'auto'}}>
+                                <div style={{fontWeight:600,fontSize:11,color:'var(--text-primary)',marginBottom:4}}>{rec.title}</div>
+                                <div style={{fontSize:10,lineHeight:1.45,color:'var(--text-secondary)'}}>
+                                  {rec.overview}
+                                </div>
+                                <div style={{marginTop:8,fontSize:9,color:'var(--accent-gold)',flexShrink:0}}>tap again to close</div>
+                              </div>
+                            )}
+                            {rec.platform && !isExpanded && (
+                              <span style={{position:'absolute',bottom:5,left:5,fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:4,
+                                background: onMySub ? 'rgba(102,187,106,0.9)' : 'rgba(0,0,0,0.7)',
+                                color: onMySub ? '#000' : '#aaa', backdropFilter:'blur(4px)'}}>
+                                {rec.platform}
+                              </span>
+                            )}
+                          </div>
+                          <div className="rec-card-body">
+                            <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
+                            <div className="rec-card-reason">
+                              {rec.because || rec.reason}
+                            </div>
+                            <div className="rec-card-because">
+                              {(rec.type !== 'similar' && rec.because) ? rec.reason : ''}
+                            </div>
+                            <div className="rec-card-actions">
+                              <button className="rec-add-btn" style={{fontSize:14, opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => {
+                                if (isReadOnly) return;
+                                const priorEntry = items.find(i => i.title.toLowerCase().trim() === rec.title.toLowerCase().trim());
+                                setShowForm({
+                                  title: rec.title,
+                                  type: rec.mediaType === 'movie' ? 'movie' : 'tv',
+                                  season: rec.season ? String(rec.season) : (rec.mediaType === 'movie' ? '' : '1'),
+                                  status: 'want_to_watch', priority: '1',
+                                  network: rec.platform || priorEntry?.network || '', who: priorEntry?.who || 'together',
+                                  nonFree: false, posterUrl: rec.posterUrl || '',
+                                  tmdbId: rec.tmdbId || null, rating: 0,
+                                  ratedDate: '', releaseDate: rec.airDate || '',
+                                  overview: rec.overview || '',
+                                });
+                                pendingRecDismiss.current = rec.key;
+                              }}>➕</button>
+                              <button className="rec-dismiss-btn" title="Remind me later" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; snoozeRec(rec.key); }}>💤</button>
+                              <button className="rec-dismiss-btn" title="Never show again" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; dismissRec(rec.key); }}>❌</button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {hasMore && (
+                      <div style={{flexShrink:0,display:'flex',alignItems:'center',paddingRight:8}}>
+                        <button className="btn btn-secondary" style={{fontSize:12,padding:'8px 14px',whiteSpace:'nowrap'}}
+                          onClick={() => setRecsVisible(v => v + 10)}>
+                          Show {Math.min(10, visible.length - recsVisible)} more →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>);
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── TOOLBAR ── */}
       <div className="toolbar-bar">
           <div style={{maxWidth:'1400px',margin:'0 auto',padding:'8px 0',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
@@ -3295,162 +3452,6 @@ function App({ user, onSignOut, isReadOnly = false }) {
         </div>
       </div>
 
-
-      {/* ── RECS PANEL ── */}
-      {TMDB_API_KEY && (
-        <div className="recs-bar">
-          <div className="recs-toggle" onClick={toggleRecs}>
-            <span className="recs-toggle-label">
-              💡 Recommendations
-              {recs !== null && !recsLoading && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
-                return visible.length > 0 ? <span className="recs-badge">{visible.length}</span> : null;
-              })()}
-              {recsLoading && <span style={{fontSize:12,color:'var(--accent-gold)',fontFamily:'Inter',fontWeight:400,letterSpacing:0}}>fetching…</span>}
-            </span>
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              {showRecs && dismissedRecs.size > 0 && (
-                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
-                  onClick={(e) => { e.stopPropagation(); setShowRestorePanel(p => !p); }}>
-                  ↩ Dismissed ({dismissedRecs.size})
-                </span>
-              )}
-              {showRecs && recs !== null && !recsLoading && (
-                <span style={{fontSize:11,color:'var(--text-muted)',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-secondary)',cursor:'pointer'}}
-                  title="Re-fetches TMDB for new upcoming seasons & fresh recommendations"
-                  onClick={(e) => { e.stopPropagation(); setRecs(null); setRecsVisible(10); fetchRecs(); }}>
-                  🔄 Refresh
-                </span>
-              )}
-              <span style={{fontSize:11,color:'var(--text-muted)'}}>{showRecs ? '▲ Hide' : '▼ Show'}</span>
-            </div>
-          </div>
-
-          {showRecs && showRestorePanel && recs && dismissedRecs.size > 0 && (
-            <div style={{margin:'0 0 10px 0',background:'var(--bg-secondary)',borderRadius:10,padding:'10px 12px',border:'1px solid var(--border)'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>Dismissed recommendations</span>
-                <span style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer'}} onClick={() => setShowRestorePanel(false)}>✕</span>
-              </div>
-              <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                {recs.filter(r => dismissedRecs.has(r.key)).map(r => (
-                  <div key={r.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'5px 8px',background:'var(--bg-card)',borderRadius:7,border:'1px solid var(--border)'}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.title}{r.season ? ` S${r.season}` : ''}</div>
-                      <div style={{fontSize:10,color:'var(--accent-gold)'}}>{r.because || r.reason}</div>
-                    </div>
-                    <button onClick={() => {
-                      setDismissedRecs(prev => {
-                         const next = new Set(prev); next.delete(r.key);
-                         const newData = {}; next.forEach(k => { newData[k] = true; });
-                         db.collection('settings').doc('rec_dismissed').set(newData).catch(() => {});
-                         return next;
-                       });
-                    }} style={{flexShrink:0,fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid var(--accent-gold)',background:'transparent',color:'var(--accent-gold)',cursor:'pointer',fontWeight:600}}>
-                      Restore
-                    </button>
-                  </div>
-                ))}
-                {recs.filter(r => dismissedRecs.has(r.key)).length === 0 && (
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>Nothing left to restore.</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {showRecs && (
-            <div style={{paddingBottom:4}}>
-              {recsLoading && (
-                <div style={{padding:'12px 0',color:'var(--text-muted)',fontSize:13,display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>
-                  Checking TMDB for upcoming seasons &amp; recommendations…
-                </div>
-              )}
-              {recs !== null && (() => {
-                const visible = recs.filter(r => !dismissedRecs.has(r.key) && !(snoozedRecs[r.key] && snoozedRecs[r.key] > Date.now()));
-                if (!recsLoading && !visible.length) return <div className="recs-empty">✨ No new recs right now — check back after watching more!</div>;
-                const page = visible.slice(0, recsVisible);
-                const hasMore = visible.length > recsVisible;
-                return (<>
-                  <div className="recs-scroll">
-                    {page.map(rec => {
-                      const onMySub = MY_SUBS.includes(rec.platform);
-                      const isExpanded = expandedRec === rec.key;
-                      const badgeClass = rec.type === 'upcoming' ? 'rec-badge-upcoming' : rec.type === 'new' ? 'rec-badge-new' : 'rec-badge-similar';
-                      const badgeLabel = rec.type === 'upcoming' ? '📅 NEW SEASON' : rec.type === 'new' ? '🆕 NEW' : '✨ FOR YOU';
-                      return (
-                        <div key={rec.key} className="rec-card">
-                          <div className="rec-card-poster" style={{cursor: rec.overview ? 'pointer' : 'default'}}
-                            onClick={() => rec.overview && setExpandedRec(isExpanded ? null : rec.key)}>
-                            {rec.posterUrl
-                              ? <img src={rec.posterUrl} alt={rec.title} loading="lazy" />
-                              : <span style={{fontSize:32,opacity:0.3}}>{rec.mediaType === 'movie' ? '🎥' : '📺'}</span>
-                            }
-                            <span className={`rec-card-badge ${badgeClass}`}>{badgeLabel}</span>
-                            {isExpanded && rec.overview && (
-                              <div className="rec-desc-overlay" style={{overflowY:'auto'}}>
-                                <div style={{fontWeight:600,fontSize:11,color:'var(--text-primary)',marginBottom:4}}>{rec.title}</div>
-                                <div style={{fontSize:10,lineHeight:1.45,color:'var(--text-secondary)'}}>
-                                  {rec.overview}
-                                </div>
-                                <div style={{marginTop:8,fontSize:9,color:'var(--accent-gold)',flexShrink:0}}>tap again to close</div>
-                              </div>
-                            )}
-                            {rec.platform && !isExpanded && (
-                              <span style={{position:'absolute',bottom:5,left:5,fontSize:9,fontWeight:700,padding:'2px 5px',borderRadius:4,
-                                background: onMySub ? 'rgba(102,187,106,0.9)' : 'rgba(0,0,0,0.7)',
-                                color: onMySub ? '#000' : '#aaa', backdropFilter:'blur(4px)'}}>
-                                {rec.platform}
-                              </span>
-                            )}
-                          </div>
-                          <div className="rec-card-body">
-                            <div className="rec-card-title">{rec.title}{rec.season ? ` S${rec.season}` : ''}</div>
-                            <div className="rec-card-reason">
-                              {rec.because || rec.reason}
-                            </div>
-                            <div className="rec-card-because">
-                              {(rec.type !== 'similar' && rec.because) ? rec.reason : ''}
-                            </div>
-                            <div className="rec-card-actions">
-                              <button className="rec-add-btn" style={{fontSize:14, opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => {
-                                if (isReadOnly) return;
-                                const priorEntry = items.find(i => i.title.toLowerCase().trim() === rec.title.toLowerCase().trim());
-                                setShowForm({
-                                  title: rec.title,
-                                  type: rec.mediaType === 'movie' ? 'movie' : 'tv',
-                                  season: rec.season ? String(rec.season) : (rec.mediaType === 'movie' ? '' : '1'),
-                                  status: 'want_to_watch', priority: '1',
-                                  network: rec.platform || priorEntry?.network || '', who: priorEntry?.who || 'together',
-                                  nonFree: false, posterUrl: rec.posterUrl || '',
-                                  tmdbId: rec.tmdbId || null, rating: 0,
-                                  ratedDate: '', releaseDate: rec.airDate || '',
-                                  overview: rec.overview || '',
-                                });
-                                pendingRecDismiss.current = rec.key;
-                              }}>➕</button>
-                              <button className="rec-dismiss-btn" title="Remind me later" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; snoozeRec(rec.key); }}>💤</button>
-                              <button className="rec-dismiss-btn" title="Never show again" style={{opacity: isReadOnly ? 0.35 : 1, cursor: isReadOnly ? 'not-allowed' : 'pointer'}} onClick={() => { if (isReadOnly) return; dismissRec(rec.key); }}>❌</button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {hasMore && (
-                      <div style={{flexShrink:0,display:'flex',alignItems:'center',paddingRight:8}}>
-                        <button className="btn btn-secondary" style={{fontSize:12,padding:'8px 14px',whiteSpace:'nowrap'}}
-                          onClick={() => setRecsVisible(v => v + 10)}>
-                          Show {Math.min(10, visible.length - recsVisible)} more →
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>);
-              })()}
-            </div>
-          )}
-        </div>
-      )}
 
 
 
