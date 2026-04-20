@@ -926,6 +926,8 @@
     .filter-desktop-chips { display: none !important; }
     .filter-mobile-dropdowns { display: block; }
     .tools-desktop-only { display: none !important; }
+    /* Disable sticky on table header on mobile — overflow-x:auto ancestors break position:sticky */
+    .table-view th { position: static; }
   }
 
   @media (max-width: 480px) {
