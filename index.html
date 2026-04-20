@@ -2990,6 +2990,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                     onClick={() => { setShowUserMenu(false); onSignOut(); }}>Sign out</button>
                 </div>
               )}
+            </div>
           </div>
 
           {/* Row 2: Search */}
@@ -3033,9 +3034,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
               )}
               {/* Tools dropdown */}
               {TMDB_API_KEY && !isReadOnly && (
-                {/* Tools dropdown */}
-                            {TMDB_API_KEY && !isReadOnly && (
-                              <div className="tools-desktop-only" style={{position:'relative'}}>
+                <div className="tools-desktop-only" style={{position:'relative'}}>
                                 {(posterProgress || platformProgress || descProgress) ? (
                                   <div style={{
                                     display:'flex', alignItems:'center', gap:8,
@@ -3094,12 +3093,11 @@ function App({ user, onSignOut, isReadOnly = false }) {
                                 )}
                               </div>
                             )}
-              )}
             </div>
           </div>
 
           {/* Filter panel - expands below toolbar */}
-                  <div className={`filter-inner-wrap ${filtersOpen ? 'open' : ''}`}>
+          <div className={`filter-inner-wrap ${filtersOpen ? 'open' : ''}`}>
           {/* ── DESKTOP: chip layout ── */}
           <div className="filter-inner filter-desktop-chips">
             <div className="filter-section">
