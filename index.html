@@ -2224,6 +2224,18 @@ function App({ user, onSignOut, isReadOnly = false }) {
     }
   }, [search]);
 
+  const fixAllTitleCasing = useCallback(async () => {
+    const toFix = items.filter(i => i.firestoreId && i.title && toTitleCase(i.title) !== i.title);
+    if (!toFix.length) { showToast('✅ All titles already have consistent casing!'); return; }
+    showToast(`🔤 Fixing casing on ${toFix.length} titles…`);
+    let done = 0;
+    for (const item of toFix) {
+      await db.collection('content').doc(item.firestoreId).update({ title: toTitleCase(item.title) });
+      done++;
+    }
+    showToast(`✅ Fixed casing on ${done} titles!`);
+  }, [items]);
+
   const fetchAllPosters = useCallback(async () => {
     const missing = items.filter(i => !i.posterUrl && i.title && i.firestoreId);
     if (!missing.length) { showToast('✅ All items already have posters!'); return; }
@@ -3010,6 +3022,10 @@ function App({ user, onSignOut, isReadOnly = false }) {
                     <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
                       onClick={() => { setShowToolsMenu(false); setShowDupesModal(true); }}>
                       🔍 Find duplicates
+                    </button>
+                    <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13,marginTop:4}}
+                      onClick={() => { setShowToolsMenu(false); fixAllTitleCasing(); }}>
+                      🔤 Fix title casing
                     </button>
                   </div>
                 )}
