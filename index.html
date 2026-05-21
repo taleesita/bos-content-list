@@ -1993,7 +1993,7 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
             onBlur={e => save('season', e.target.value)}
             onKeyDown={e => { if (e.key==='Enter') save('season', e.target.value); if (e.key==='Escape') cancel(); }}
             onClick={e => e.stopPropagation()} />
-        ) : <span className="editable-cell">{item.season ? formatSeason(item.season) : '—'}</span>}
+        ) : <span className="editable-cell">{item.type === 'movie' ? '—' : item.season ? formatSeason(item.season) : '—'}</span>}
       </td>
       {/* Who */}
       <td onClick={(e) => startEdit(e, 'who')}>
@@ -2683,13 +2683,14 @@ function App({ user, onSignOut, isReadOnly = false }) {
     setRecsLoading(false);
   }, [items, user]);
 
-  // Keep sticky header row in sync — measure ONLY the button row, not the expandable filter panel.
-  // This keeps TITLE/STATUS locked just below the Filters button regardless of whether filters are open.
+  // Keep --table-header-top in sync with the full sticky area above the list.
+  // On desktop: toolbar-bar includes the always-visible filter chips, so full height is correct.
+  // On mobile: th uses position:static so this value doesn't affect layout there.
   useEffect(() => {
     const update = () => {
       const h1 = document.querySelector('.header')?.offsetHeight || 0;
       const h2 = document.querySelector('.stats-bar')?.offsetHeight || 0;
-      const h3 = document.querySelector('.toolbar-button-row')?.offsetHeight || 0;
+      const h3 = document.querySelector('.toolbar-bar')?.offsetHeight || 0;
       document.documentElement.style.setProperty('--header-h', h1 + 'px');
       document.documentElement.style.setProperty('--stats-h', h2 + 'px');
       const topVal = (h1 + h2 + h3) + 'px';
@@ -2698,27 +2699,15 @@ function App({ user, onSignOut, isReadOnly = false }) {
     };
     update();
     const ro = new ResizeObserver(update);
-    const buttonRow = document.querySelector('.toolbar-button-row');
+    const toolbar = document.querySelector('.toolbar-bar');
     const header = document.querySelector('.header');
     const statsBar = document.querySelector('.stats-bar');
-    if (buttonRow) ro.observe(buttonRow);
+    if (toolbar) ro.observe(toolbar);
     if (header) ro.observe(header);
     if (statsBar) ro.observe(statsBar);
     window.addEventListener('resize', update);
     return () => { ro.disconnect(); window.removeEventListener('resize', update); };
   }, []);
-
-  // Refresh inline top styles after filter toggle in case new th elements were rendered
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const h1 = document.querySelector('.header')?.offsetHeight || 0;
-      const h2 = document.querySelector('.stats-bar')?.offsetHeight || 0;
-      const h3 = document.querySelector('.toolbar-button-row')?.offsetHeight || 0;
-      const topVal = (h1 + h2 + h3) + 'px';
-      document.querySelectorAll('.table-view th').forEach(el => { el.style.top = topVal; });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [filtersOpen]);
 
   // Auto-fetch recs on mount (banner defaults open)
   useEffect(() => {
@@ -3699,7 +3688,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                         }}>
                           {item.posterUrl && <img src={item.posterUrl} style={{width:28,height:40,objectFit:'cover',borderRadius:3,flexShrink:0}} alt="" />}
                           <div style={{flex:1,fontSize:12}}>
-                            <span style={{color:'var(--text-muted)'}}>S{item.season || '—'}</span>
+                            {item.type !== 'movie' && <span style={{color:'var(--text-muted)'}}>S{item.season || '—'}</span>}
                             {' · '}
                             <span className={`tag ${getStatusTagClass(item.status)}`} style={{fontSize:10}}>{getStatusLabel(item.status)}</span>
                             {item.rating > 0 && <> · <span>★{item.rating}</span></>}
