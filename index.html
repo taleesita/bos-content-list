@@ -556,9 +556,6 @@
     color: var(--text-muted);
     border-bottom: 1px solid var(--border);
     background: var(--bg-secondary);
-    position: sticky;
-    top: var(--table-header-top, 120px);
-    z-index: 10;
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
@@ -926,8 +923,6 @@
     .filter-desktop-chips { display: none !important; }
     .filter-mobile-dropdowns { display: block; }
     .tools-desktop-only { display: none !important; }
-    /* Disable sticky on table header on mobile — overflow-x:auto ancestors break position:sticky */
-    .table-view th { position: static; }
   }
 
   @media (max-width: 480px) {
@@ -2701,26 +2696,18 @@ function App({ user, onSignOut, isReadOnly = false }) {
     setRecsLoading(false);
   }, [items, user]);
 
-  // Keep --table-header-top in sync with the full sticky area above the list.
-  // On desktop: toolbar-bar includes the always-visible filter chips, so full height is correct.
-  // On mobile: th uses position:static so this value doesn't affect layout there.
+  // Keep --header-h and --stats-h in sync so the stats bar and toolbar stack correctly when sticky
   useEffect(() => {
     const update = () => {
       const h1 = document.querySelector('.header')?.offsetHeight || 0;
       const h2 = document.querySelector('.stats-bar')?.offsetHeight || 0;
-      const h3 = document.querySelector('.toolbar-bar')?.offsetHeight || 0;
       document.documentElement.style.setProperty('--header-h', h1 + 'px');
       document.documentElement.style.setProperty('--stats-h', h2 + 'px');
-      const topVal = (h1 + h2 + h3) + 'px';
-      document.documentElement.style.setProperty('--table-header-top', topVal);
-      document.querySelectorAll('.table-view th').forEach(el => { el.style.top = topVal; });
     };
     update();
     const ro = new ResizeObserver(update);
-    const toolbar = document.querySelector('.toolbar-bar');
     const header = document.querySelector('.header');
     const statsBar = document.querySelector('.stats-bar');
-    if (toolbar) ro.observe(toolbar);
     if (header) ro.observe(header);
     if (statsBar) ro.observe(statsBar);
     window.addEventListener('resize', update);
