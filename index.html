@@ -1800,6 +1800,15 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 // ============ DETAIL MODAL ============
 function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadOnly = false }) {
   const [addingNext, setAddingNext] = React.useState(false);
+  const [episodeCount, setEpisodeCount] = React.useState(null);
+  React.useEffect(() => {
+    setEpisodeCount(null);
+    if (item.type !== 'tv' || !item.tmdbId || !item.season || !TMDB_API_KEY) return;
+    fetch(`https://api.themoviedb.org/3/tv/${item.tmdbId}/season/${item.season}?api_key=${TMDB_API_KEY}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && Array.isArray(d.episodes)) setEpisodeCount(d.episodes.length); })
+      .catch(() => {});
+  }, [item.tmdbId, item.season, item.type]);
   const handleAddNextSeason = async () => {
     setAddingNext(true);
     try {
@@ -1845,10 +1854,19 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadO
             <span className="detail-field-label">Priority</span>
             <span className="detail-field-value" style={{color: getPriorityColor(item.priority), fontWeight: 700}}>{item.priority || '—'}</span>
           </div>
-          <div className="detail-field">
-            <span className="detail-field-label">Season</span>
-            <span className="detail-field-value">{formatSeason(item.season)}</span>
-          </div>
+          {item.type !== 'movie' && (
+            <div className="detail-field">
+              <span className="detail-field-label">Season</span>
+              <span className="detail-field-value">
+                {formatSeason(item.season)}
+                {episodeCount !== null && (
+                  <span style={{color:'var(--text-muted)', fontSize:12, marginLeft:8}}>
+                    · {episodeCount} eps
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
           <div className="detail-field">
             <span className="detail-field-label">Network</span>
             <span className="detail-field-value">{item.network || '—'}</span>
