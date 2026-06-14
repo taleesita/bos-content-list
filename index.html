@@ -651,6 +651,7 @@
     max-width: 700px;
     width: 100%;
     max-height: 90vh;
+    overflow-x: hidden;
     overflow-y: auto;
     animation: fadeIn 0.3s;
     flex-shrink: 0;
@@ -911,6 +912,7 @@
     .form-grid { grid-template-columns: 1fr; }
     .detail-header { flex-direction: column; align-items: center; text-align: center; }
     .detail-poster { width: 120px; min-width: 120px; }
+    .detail-title { font-size: 24px; word-break: break-word; }
     .content-area { padding: 12px; }
     .stats-inner { gap: 16px; }
     .modal-overlay { align-items: flex-start; padding: 12px; }
@@ -1808,12 +1810,17 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadOnly = false }) {
   const [addingNext, setAddingNext] = React.useState(false);
   const [episodeCount, setEpisodeCount] = React.useState(null);
+  const [seasonAirDate, setSeasonAirDate] = React.useState(null);
   React.useEffect(() => {
     setEpisodeCount(null);
+    setSeasonAirDate(null);
     if (item.type !== 'tv' || !item.tmdbId || !item.season || !TMDB_API_KEY) return;
     fetch(`https://api.themoviedb.org/3/tv/${item.tmdbId}/season/${item.season}?api_key=${TMDB_API_KEY}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d && Array.isArray(d.episodes)) setEpisodeCount(d.episodes.length); })
+      .then(d => {
+        if (d && Array.isArray(d.episodes)) setEpisodeCount(d.episodes.length);
+        if (d && d.air_date) setSeasonAirDate(d.air_date);
+      })
       .catch(() => {});
   }, [item.tmdbId, item.season, item.type]);
   const handleAddNextSeason = async () => {
@@ -1880,7 +1887,9 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadO
           </div>
           <div className="detail-field">
             <span className="detail-field-label">Release Date</span>
-            <span className="detail-field-value">{item.releaseDate || '—'}</span>
+            <span className="detail-field-value">
+              {item.type === 'tv' && seasonAirDate ? seasonAirDate : (item.releaseDate || '—')}
+            </span>
           </div>
           <div className="detail-field">
             <span className="detail-field-label">Rated Date</span>
