@@ -1128,6 +1128,7 @@ const NETWORK_OPTIONS = [
 ];
 
 const TMDB_API_KEY = '761b5bdc298a53e848abbc17ce7f81a3';
+const OMDB_API_KEY = '65dde18';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w300';
 
 // Platforms you subscribe to — shown first in dropdowns
@@ -1333,6 +1334,29 @@ function StarRatingInput({ value, onChange }) {
       )}
     </div>
   );
+}
+
+// ============ OMDB SCORE FETCH ============
+async function fetchOMDBScores(item) {
+  if (!OMDB_API_KEY || !item.tmdbId) return null;
+  try {
+    const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+    // Step 1: get IMDb ID from TMDB external_ids
+    const extRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+    if (!extRes.ok) return null;
+    const extData = await extRes.json();
+    const imdbId = extData.imdb_id;
+    if (!imdbId) return null;
+    // Step 2: fetch OMDB by IMDb ID
+    const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}`);
+    if (!omdbRes.ok) return null;
+    const d = await omdbRes.json();
+    if (d.Response === 'False') return null;
+    const rt   = d.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value || null;
+    const mc   = d.Ratings?.find(r => r.Source === 'Metacritic')?.Value || null;
+    const imdb = d.imdbRating && d.imdbRating !== 'N/A' ? d.imdbRating : null;
+    return { rtScore: rt, metacriticScore: mc, imdbRating: imdb };
+  } catch(e) { return null; }
 }
 
 // ============ TMDB SEARCH ============
@@ -1807,10 +1831,11 @@ function FormModal({ item, onSave, onClose, isEdit }) {
 }
 
 // ============ DETAIL MODAL ============
-function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadOnly = false }) {
+function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, onScoresFetched, isReadOnly = false }) {
   const [addingNext, setAddingNext] = React.useState(false);
   const [episodeCount, setEpisodeCount] = React.useState(null);
   const [seasonAirDate, setSeasonAirDate] = React.useState(null);
+  const [liveScores, setLiveScores] = React.useState(null);
   React.useEffect(() => {
     setEpisodeCount(null);
     setSeasonAirDate(null);
@@ -1823,6 +1848,16 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadO
       })
       .catch(() => {});
   }, [item.tmdbId, item.season, item.type]);
+  React.useEffect(() => {
+    setLiveScores(null);
+    if (item.rtScore || !item.tmdbId || !OMDB_API_KEY) return;
+    fetchOMDBScores(item).then(scores => {
+      if (scores) {
+        setLiveScores(scores);
+        if (onScoresFetched) onScoresFetched(scores);
+      }
+    });
+  }, [item.tmdbId, item.type]);
   const handleAddNextSeason = async () => {
     setAddingNext(true);
     try {
@@ -1896,6 +1931,19 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, isReadO
             <span className="detail-field-value">{item.ratedDate || '—'}</span>
           </div>
 
+          {(() => {
+            const rt   = item.rtScore       || liveScores?.rtScore;
+            const mc   = item.metacriticScore || liveScores?.metacriticScore;
+            const imdb = item.imdbRating    || liveScores?.imdbRating;
+            if (!rt && !mc && !imdb) return null;
+            return (
+              <div style={{display:'flex', gap:18, padding:'10px 0', borderBottom:'1px solid rgba(42,42,62,0.5)', flexWrap:'wrap'}}>
+                {rt   && <span style={{fontSize:13}}>🍅 <strong>{rt}</strong></span>}
+                {mc   && <span style={{fontSize:13}}>🎬 <strong>{mc}</strong></span>}
+                {imdb && <span style={{fontSize:13}}>⭐ <strong>{imdb}</strong></span>}
+              </div>
+            );
+          })()}
           {item.overview && (
             <div style={{marginTop:12, padding:'10px 14px', background:'var(--bg-card)', borderRadius:8}}>
               <div style={{fontSize:11, fontWeight:600, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6}}>Description</div>
@@ -2028,6 +2076,12 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
             onKeyDown={e => { if (e.key==='Enter') save('season', e.target.value); if (e.key==='Escape') cancel(); }}
             onClick={e => e.stopPropagation()} />
         ) : <span className="editable-cell">{item.type === 'movie' ? '—' : item.season ? formatSeason(item.season) : '—'}</span>}
+      </td>
+      {/* RT Score */}
+      <td style={{textAlign:'center', fontSize:13, whiteSpace:'nowrap'}}>
+        {item.rtScore
+          ? <span style={{color: parseInt(item.rtScore) >= 60 ? '#fa320a' : 'var(--text-muted)', fontWeight:600}}>{item.rtScore}</span>
+          : <span style={{color:'var(--text-muted)'}}>—</span>}
       </td>
       {/* Who */}
       <td onClick={(e) => startEdit(e, 'who')}>
@@ -2247,6 +2301,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
   const [posterProgress, setPosterProgress] = useState(null);
   const [platformProgress, setPlatformProgress] = useState(null);
   const [descProgress, setDescProgress] = useState(null);
+  const [scoresProgress, setScoresProgress] = useState(null);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showDupesModal, setShowDupesModal] = useState(false);
@@ -2422,6 +2477,29 @@ function App({ user, onSignOut, isReadOnly = false }) {
     }
     setDescProgress(null);
     showToast('📖 Descriptions fetched!');
+  }, [items]);
+
+  const fetchUnwatchedScores = useCallback(async () => {
+    if (!OMDB_API_KEY) { showToast('❌ No OMDB API key set'); return; }
+    const toFetch = items.filter(i => i.firestoreId && i.tmdbId && i.status === 'want_to_watch' && !i.rtScore);
+    if (!toFetch.length) { showToast('✅ All unwatched items already have scores!'); return; }
+    setScoresProgress({ done: 0, total: toFetch.length });
+    let done = 0;
+    const batchSize = 3;
+    for (let i = 0; i < toFetch.length; i += batchSize) {
+      const batch = toFetch.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          const scores = await fetchOMDBScores(item);
+          if (scores) await db.collection('content').doc(item.firestoreId).update(scores);
+        } catch(e) {}
+        done++;
+        setScoresProgress({ done, total: toFetch.length });
+      }));
+      if (i + batchSize < toFetch.length) await new Promise(r => setTimeout(r, 500));
+    }
+    setScoresProgress(null);
+    showToast('🍅 Scores fetched!');
   }, [items]);
 
   const dismissRec = (key) => {
@@ -2837,6 +2915,11 @@ function App({ user, onSignOut, isReadOnly = false }) {
         cmp = db - da;
       }
       else if (sortBy === 'network') cmp = (a.network || '').localeCompare(b.network || '');
+      else if (sortBy === 'rtScore') {
+        const pa = a.rtScore ? parseInt(a.rtScore) : -1;
+        const pb = b.rtScore ? parseInt(b.rtScore) : -1;
+        cmp = pb - pa; // default high-to-low
+      }
       return sortDir === 'asc' ? cmp : -cmp;
     });
 
@@ -3291,21 +3374,21 @@ function App({ user, onSignOut, isReadOnly = false }) {
               {/* Tools dropdown */}
               {TMDB_API_KEY && !isReadOnly && (
                 <div className="tools-desktop-only" style={{position:'relative'}}>
-                                {(posterProgress || platformProgress || descProgress) ? (
+                                {(posterProgress || platformProgress || descProgress || scoresProgress) ? (
                                   <div style={{
                                     display:'flex', alignItems:'center', gap:8,
                                     background:'var(--bg-card)', border:'1px solid var(--border)',
                                     borderRadius:8, padding:'6px 14px', fontSize:13
                                   }}>
-                                    <span>{posterProgress ? '🎨' : descProgress ? '📖' : '📡'}</span>
+                                    <span>{posterProgress ? '🎨' : scoresProgress ? '🍅' : descProgress ? '📖' : '📡'}</span>
                                     <div style={{width:80, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
                                       <div style={{
-                                        width: `${((posterProgress||platformProgress||descProgress).done/(posterProgress||platformProgress||descProgress).total*100).toFixed(0)}%`,
+                                        width: `${((posterProgress||platformProgress||descProgress||scoresProgress).done/(posterProgress||platformProgress||descProgress||scoresProgress).total*100).toFixed(0)}%`,
                                         height:'100%', background:'var(--accent-gold)', borderRadius:3, transition:'width 0.3s'
                                       }}/>
                                     </div>
                                     <span style={{color:'var(--text-muted)', fontSize:11}}>
-                                      {(posterProgress||platformProgress||descProgress).done}/{(posterProgress||platformProgress||descProgress).total}
+                                      {(posterProgress||platformProgress||descProgress||scoresProgress).done}/{(posterProgress||platformProgress||descProgress||scoresProgress).total}
                                     </span>
                                   </div>
                                 ) : (
@@ -3314,7 +3397,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                                     🛠 Tools ▾
                                   </button>
                                 )}
-                                {showToolsMenu && !posterProgress && !platformProgress && !descProgress && (
+                                {showToolsMenu && !posterProgress && !platformProgress && !descProgress && !scoresProgress && (
                                   <div style={{
                                     position:'absolute', top:'calc(100% + 6px)', right:0,
                                     background:'var(--bg-card)', border:'1px solid var(--border)',
@@ -3336,6 +3419,12 @@ function App({ user, onSignOut, isReadOnly = false }) {
                                       onClick={() => { setShowToolsMenu(false); fetchAllDescriptions(); }}>
                                       📖 Fetch missing descriptions
                                     </button>
+                                    {OMDB_API_KEY && (
+                                      <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginTop:4,fontSize:13}}
+                                        onClick={() => { setShowToolsMenu(false); fetchUnwatchedScores(); }}>
+                                        🍅 Fetch unwatched scores
+                                      </button>
+                                    )}
                                     <div style={{height:1,background:'var(--border)',margin:'4px 0'}}/>
                                     <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
                                       onClick={() => { setShowToolsMenu(false); setShowDupesModal(true); }}>
@@ -3592,6 +3681,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                   <th onClick={() => handleSort('priority')}>Priority <SortArrow field="priority" /></th>
                   <th>Type</th>
                   <th>Season</th>
+                  <th onClick={() => handleSort('rtScore')} title="Rotten Tomatoes score">🍅 <SortArrow field="rtScore" /></th>
                   <th>Who</th>
                   <th onClick={() => handleSort('network')}>Network <SortArrow field="network" /></th>
                   <th onClick={() => handleSort('releaseDate')}>Release <SortArrow field="releaseDate" /></th>
@@ -3626,6 +3716,9 @@ function App({ user, onSignOut, isReadOnly = false }) {
                         <td style={{textAlign:'center'}}>{row.priority || '—'}</td>
                         <td>{getTypeEmoji(row.type)}</td>
                         <td style={{fontSize:11,color:'var(--text-muted)'}}>{seasons.join(', ')}</td>
+                        <td style={{textAlign:'center',fontSize:13}}>
+                          {(() => { const s = row._items.find(i => i.rtScore); return s ? <span>{s.rtScore}</span> : <span style={{color:'var(--text-muted)'}}>—</span>; })()}
+                        </td>
                         <td>{getWhoEmoji(row.who)}</td>
                         <td><span className="card-network">{row.network || '—'}</span></td>
                         <td>{row._avgRating > 0 ? <StarRating rating={row._avgRating} size={12}/> : <span style={{color:'var(--text-muted)'}}>—</span>}</td>
@@ -3669,6 +3762,11 @@ function App({ user, onSignOut, isReadOnly = false }) {
           onEdit={(item) => { setDetailItem(null); setEditItem(item); }}
           onDelete={handleDelete}
           onAddNextSeason={handleAddNextSeason}
+          onScoresFetched={(scores) => {
+            if (detailItem?.firestoreId) {
+              db.collection('content').doc(detailItem.firestoreId).update(scores).catch(()=>{});
+            }
+          }}
           isReadOnly={isReadOnly} />
       )}
 
