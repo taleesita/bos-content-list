@@ -305,7 +305,7 @@
     font-size: 10px; line-height: 1.4; color: var(--text-secondary);
     border-radius: 12px; overflow-y: auto; overflow-x: hidden;
   }
-  .rec-card-body { padding: 8px 10px; display: flex; flex-direction: column; height: 126px; }
+  .rec-card-body { padding: 8px 10px 10px; display: flex; flex-direction: column; min-height: 130px; }
   .rec-card-title {
     font-size: 12px; font-weight: 700; line-height: 1.3; color: var(--text-primary);
     overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -1340,11 +1340,20 @@ function StarRatingInput({ value, onChange }) {
 async function fetchOMDBScores(item) {
   if (!OMDB_API_KEY) return null;
   try {
+    const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+    const omdbType  = item.type === 'movie' ? 'movie' : 'series';
     let d = null;
-    // Step 1: try TMDB external_ids → OMDB by IMDb ID (most accurate)
-    if (item.tmdbId) {
-      const mediaType = item.type === 'movie' ? 'movie' : 'tv';
-      const extRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+
+    // Step 1: ensure we have a tmdbId — search TMDB if missing
+    let tmdbId = item.tmdbId;
+    if (!tmdbId && TMDB_API_KEY && item.title) {
+      const sr = await fetch(`https://api.themoviedb.org/3/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}`);
+      if (sr.ok) { const sd = await sr.json(); tmdbId = sd.results?.[0]?.id || null; }
+    }
+
+    // Step 2: TMDB external_ids → IMDb ID → OMDB (most accurate)
+    if (tmdbId) {
+      const extRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
       if (extRes.ok) {
         const extData = await extRes.json();
         const imdbId = extData.imdb_id;
@@ -1354,14 +1363,21 @@ async function fetchOMDBScores(item) {
         }
       }
     }
-    // Step 2: fall back to OMDB title+year search
+
+    // Step 3: fall back to OMDB title search (no year for TV — season dates don't match show premiere year)
     if (!d || d.Response === 'False') {
-      const type = item.type === 'movie' ? 'movie' : 'series';
-      const year = (item.releaseDate || '').slice(0, 4);
-      const url = `https://www.omdbapi.com/?t=${encodeURIComponent(item.title)}&type=${type}${year ? `&y=${year}` : ''}&apikey=${OMDB_API_KEY}`;
+      const year = item.type === 'movie' ? (item.releaseDate || '').slice(0, 4) : '';
+      const url = `https://www.omdbapi.com/?t=${encodeURIComponent(item.title)}&type=${omdbType}${year ? `&y=${year}` : ''}&apikey=${OMDB_API_KEY}`;
       const res = await fetch(url);
       if (res.ok) d = await res.json();
     }
+
+    // Step 4: last resort — title only, no type or year
+    if (!d || d.Response === 'False') {
+      const res = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(item.title)}&apikey=${OMDB_API_KEY}`);
+      if (res.ok) d = await res.json();
+    }
+
     if (!d || d.Response === 'False') return null;
     const rt   = d.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value || null;
     const mc   = d.Ratings?.find(r => r.Source === 'Metacritic')?.Value || null;
@@ -2529,14 +2545,16 @@ function App({ user, onSignOut, isReadOnly = false }) {
     setDismissedRecs(prev => {
       const next = new Set(prev);
       next.add(key);
-      db.collection('settings').doc('rec_dismissed').set({ [key]: true }, { merge: true }).catch(() => {});
+      db.collection('settings').doc('rec_dismissed').set({ [key]: true }, { merge: true })
+        .catch((e) => showToast('⚠️ Could not save dismissal — ' + (e?.message || 'unknown error')));
       return next;
     });
   };
   const snoozeRec = (key) => {
     setSnoozedRecs(prev => {
       const next = { ...prev, [key]: Date.now() + 30 * 24 * 60 * 60 * 1000 };
-      db.collection('settings').doc('rec_snooze').set(next).catch(() => {});
+      db.collection('settings').doc('rec_snooze').set(next)
+        .catch((e) => showToast('⚠️ Could not save snooze — ' + (e?.message || 'unknown error')));
       return next;
     });
   };
