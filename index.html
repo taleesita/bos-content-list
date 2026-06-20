@@ -1338,23 +1338,35 @@ function StarRatingInput({ value, onChange }) {
 
 // ============ OMDB SCORE FETCH ============
 async function fetchOMDBScores(item) {
-  if (!OMDB_API_KEY || !item.tmdbId) return null;
+  if (!OMDB_API_KEY) return null;
   try {
-    const mediaType = item.type === 'movie' ? 'movie' : 'tv';
-    // Step 1: get IMDb ID from TMDB external_ids
-    const extRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
-    if (!extRes.ok) return null;
-    const extData = await extRes.json();
-    const imdbId = extData.imdb_id;
-    if (!imdbId) return null;
-    // Step 2: fetch OMDB by IMDb ID
-    const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}`);
-    if (!omdbRes.ok) return null;
-    const d = await omdbRes.json();
-    if (d.Response === 'False') return null;
+    let d = null;
+    // Step 1: try TMDB external_ids → OMDB by IMDb ID (most accurate)
+    if (item.tmdbId) {
+      const mediaType = item.type === 'movie' ? 'movie' : 'tv';
+      const extRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${item.tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+      if (extRes.ok) {
+        const extData = await extRes.json();
+        const imdbId = extData.imdb_id;
+        if (imdbId) {
+          const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}`);
+          if (omdbRes.ok) d = await omdbRes.json();
+        }
+      }
+    }
+    // Step 2: fall back to OMDB title+year search
+    if (!d || d.Response === 'False') {
+      const type = item.type === 'movie' ? 'movie' : 'series';
+      const year = (item.releaseDate || '').slice(0, 4);
+      const url = `https://www.omdbapi.com/?t=${encodeURIComponent(item.title)}&type=${type}${year ? `&y=${year}` : ''}&apikey=${OMDB_API_KEY}`;
+      const res = await fetch(url);
+      if (res.ok) d = await res.json();
+    }
+    if (!d || d.Response === 'False') return null;
     const rt   = d.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value || null;
     const mc   = d.Ratings?.find(r => r.Source === 'Metacritic')?.Value || null;
     const imdb = d.imdbRating && d.imdbRating !== 'N/A' ? d.imdbRating : null;
+    if (!rt && !mc && !imdb) return null;
     return { rtScore: rt, metacriticScore: mc, imdbRating: imdb };
   } catch(e) { return null; }
 }
@@ -2312,6 +2324,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
   const [recsVisible, setRecsVisible] = useState(10);
   const [expandedRec, setExpandedRec] = useState(null); // rec key showing description
   const [dismissedRecs, setDismissedRecs] = useState(new Set());
+  const [dismissedRecsLoaded, setDismissedRecsLoaded] = useState(false);
   const [showRestorePanel, setShowRestorePanel] = useState(false);
   const [snoozedRecs, setSnoozedRecs] = useState({}); // { key: expiryTimestamp }, synced to Firestore
   // Load snoozed recs from Firestore (syncs across devices)
@@ -2335,7 +2348,8 @@ function App({ user, onSignOut, isReadOnly = false }) {
           localStorage.removeItem('dismissed_recs');
         }
       }
-    }).catch(() => {});
+      setDismissedRecsLoaded(true);
+    }).catch(() => { setDismissedRecsLoaded(true); });
   }, []);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [inlineEdit, setInlineEdit] = useState(null); // {id, field}
@@ -2481,17 +2495,26 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
   const fetchUnwatchedScores = useCallback(async () => {
     if (!OMDB_API_KEY) { showToast('❌ No OMDB API key set'); return; }
-    const toFetch = items.filter(i => i.firestoreId && i.tmdbId && i.status === 'want_to_watch' && !i.rtScore);
+    // Quick key validation
+    try {
+      const test = await fetch(`https://www.omdbapi.com/?t=test&apikey=${OMDB_API_KEY}`);
+      const td = await test.json();
+      if (td.Error === 'Invalid API key!') { showToast('❌ Invalid OMDB API key'); return; }
+    } catch(e) { showToast('❌ Could not reach OMDB'); return; }
+    const toFetch = items.filter(i => i.firestoreId && i.title && i.status === 'want_to_watch' && !i.rtScore);
     if (!toFetch.length) { showToast('✅ All unwatched items already have scores!'); return; }
     setScoresProgress({ done: 0, total: toFetch.length });
-    let done = 0;
+    let done = 0, saved = 0;
     const batchSize = 3;
     for (let i = 0; i < toFetch.length; i += batchSize) {
       const batch = toFetch.slice(i, i + batchSize);
       await Promise.all(batch.map(async (item) => {
         try {
           const scores = await fetchOMDBScores(item);
-          if (scores) await db.collection('content').doc(item.firestoreId).update(scores);
+          if (scores) {
+            await db.collection('content').doc(item.firestoreId).update(scores);
+            saved++;
+          }
         } catch(e) {}
         done++;
         setScoresProgress({ done, total: toFetch.length });
@@ -2499,7 +2522,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
       if (i + batchSize < toFetch.length) await new Promise(r => setTimeout(r, 500));
     }
     setScoresProgress(null);
-    showToast('🍅 Scores fetched!');
+    showToast(`🍅 Scores: ${saved} updated out of ${done} checked`);
   }, [items]);
 
   const dismissRec = (key) => {
@@ -2522,6 +2545,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
     if (!TMDB_API_KEY) return;
     setRecsLoading(true);
     const results = [];
+    const dismissed = dismissedRecs; // snapshot at fetch time
     const now = new Date();
 
     // Build lookup maps
@@ -2610,8 +2634,9 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 // Network: use saved value, or fall back to TMDB's first listed network
                 const tmdbNetwork = data.networks?.[0]?.name || null;
                 const platform = show.network || tmdbNetwork;
-                results.push({
-                  key: `upcoming_${tmdbId}_s${nextNum}`,
+                const upcomingKey = `upcoming_${tmdbId}_s${nextNum}`;
+                if (!dismissed.has(upcomingKey)) results.push({
+                  key: upcomingKey,
                   type: 'upcoming', title: show.title, season: nextNum,
                   tmdbId, mediaType: 'tv', posterUrl, airDate: airDateStr,
                   daysUntil, reason: dateLabel, platform: platform || null,
@@ -2665,7 +2690,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
           if ((r.vote_count || 0) < 30) return;
           const airYear = parseInt((r.first_air_date || r.release_date || '2000').slice(0, 4));
           if (airYear < 2005) return;
-          if (!recMap.has(rId)) {
+          if (!recMap.has(rId) && !dismissed.has(`similar_${rId}`)) {
             recMap.set(rId, {
               key: `similar_${rId}`, type: 'similar',
               title: rTitle, tmdbId: r.id, mediaType: mt,
@@ -2725,6 +2750,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
             if (!r.poster_path) return;
             if (r.original_language && r.original_language !== 'en') return;
             if (results.some(x => String(x.tmdbId) === rId)) return; // already in similar list
+            if (dismissed.has(`new_${rId}`)) return; // dismissed
             const airDate = new Date(r.first_air_date || airFrom);
             const daysAgo = Math.round((now - airDate) / 86400000);
             const daysUntil = -daysAgo;
@@ -2793,7 +2819,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
 
     setRecs([...filtered]);
     setRecsLoading(false);
-  }, [items, user]);
+  }, [items, user, dismissedRecs]);
 
   // Keep --header-h and --stats-h in sync so the stats bar and toolbar stack correctly when sticky
   useEffect(() => {
@@ -2813,10 +2839,10 @@ function App({ user, onSignOut, isReadOnly = false }) {
     return () => { ro.disconnect(); window.removeEventListener('resize', update); };
   }, []);
 
-  // Auto-fetch recs on mount (banner defaults open)
+  // Auto-fetch recs on mount — wait for dismissed list to load first so they're excluded from generation
   useEffect(() => {
-    if (loaded && recs === null && !recsLoading) fetchRecs();
-  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (loaded && dismissedRecsLoaded && recs === null && !recsLoading) fetchRecs();
+  }, [loaded, dismissedRecsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open recs and fetch if needed
   const toggleRecs = () => {
@@ -3106,28 +3132,97 @@ function App({ user, onSignOut, isReadOnly = false }) {
                 <div className="logo-sub">Track • Rate • Discover</div>
               </div>
             </div>
-            {/* Account icon - top right */}
-            <div style={{position:'relative',marginLeft:4}}>
-              <button onClick={() => setShowUserMenu(p => !p)} title="Account"
-                style={{background:'none',border:'1px solid var(--border)',borderRadius:8,padding:'4px 8px',
-                  cursor:'pointer',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:6}}>
-                {user?.photoURL
-                  ? <img src={user.photoURL} alt="" style={{width:26,height:26,borderRadius:'50%'}} />
-                  : <span style={{fontSize:18}}>⚙️</span>}
-                <span style={{fontSize:11,color:'var(--text-muted)'}}>▾</span>
-              </button>
-              {showUserMenu && (
-                <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'var(--bg-secondary)',
-                  border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',minWidth:210,zIndex:1000,
-                  boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>
-                  <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10,paddingBottom:8,borderBottom:'1px solid var(--border)',lineHeight:1.5}}>
-                    Signed in as<br/>
-                    <strong style={{color:'var(--text-primary)',fontSize:13}}>{user.displayName || user.email}</strong>
-                  </div>
-                  <button className="btn btn-secondary" style={{width:'100%',fontSize:13,textAlign:'left'}}
-                    onClick={() => { setShowUserMenu(false); onSignOut(); }}>Sign out</button>
+            {/* Right side: Tools + Account */}
+            <div style={{display:'flex', alignItems:'center', gap:6}}>
+              {/* Tools */}
+              {TMDB_API_KEY && !isReadOnly && (
+                <div style={{position:'relative'}}>
+                  {(posterProgress || platformProgress || descProgress || scoresProgress) ? (
+                    <div style={{
+                      display:'flex', alignItems:'center', gap:8,
+                      background:'var(--bg-card)', border:'1px solid var(--border)',
+                      borderRadius:8, padding:'6px 14px', fontSize:13
+                    }}>
+                      <span>{posterProgress ? '🎨' : scoresProgress ? '🍅' : descProgress ? '📖' : '📡'}</span>
+                      <div style={{width:80, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
+                        <div style={{
+                          width: `${((posterProgress||platformProgress||descProgress||scoresProgress).done/(posterProgress||platformProgress||descProgress||scoresProgress).total*100).toFixed(0)}%`,
+                          height:'100%', background:'var(--accent-gold)', borderRadius:3, transition:'width 0.3s'
+                        }}/>
+                      </div>
+                      <span style={{color:'var(--text-muted)', fontSize:11}}>
+                        {(posterProgress||platformProgress||descProgress||scoresProgress).done}/{(posterProgress||platformProgress||descProgress||scoresProgress).total}
+                      </span>
+                    </div>
+                  ) : (
+                    <button className="btn btn-secondary" onClick={() => setShowToolsMenu(m => !m)} style={{fontSize:13}}>
+                      🛠 Tools ▾
+                    </button>
+                  )}
+                  {showToolsMenu && !posterProgress && !platformProgress && !descProgress && !scoresProgress && (
+                    <div style={{
+                      position:'absolute', top:'calc(100% + 6px)', right:0,
+                      background:'var(--bg-card)', border:'1px solid var(--border)',
+                      borderRadius:10, padding:'6px', zIndex:1000,
+                      minWidth:200, boxShadow:'0 8px 24px rgba(0,0,0,0.4)'
+                    }} onMouseLeave={() => setShowToolsMenu(false)}>
+                      <div style={{padding:'6px 10px 4px', fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:1}}>
+                        One-time fetches
+                      </div>
+                      <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
+                        onClick={() => { setShowToolsMenu(false); fetchAllPosters(); }}>
+                        🎨 Fetch missing posters
+                      </button>
+                      <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
+                        onClick={() => { setShowToolsMenu(false); fetchAllPlatforms(); }}>
+                        📡 Fetch streaming platforms
+                      </button>
+                      <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                        onClick={() => { setShowToolsMenu(false); fetchAllDescriptions(); }}>
+                        📖 Fetch missing descriptions
+                      </button>
+                      {OMDB_API_KEY && (
+                        <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginTop:4,fontSize:13}}
+                          onClick={() => { setShowToolsMenu(false); fetchUnwatchedScores(); }}>
+                          🍅 Fetch unwatched scores
+                        </button>
+                      )}
+                      <div style={{height:1,background:'var(--border)',margin:'4px 0'}}/>
+                      <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
+                        onClick={() => { setShowToolsMenu(false); setShowDupesModal(true); }}>
+                        🔍 Find duplicates
+                      </button>
+                      <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13,marginTop:4}}
+                        onClick={() => { setShowToolsMenu(false); fixAllTitleCasing(); }}>
+                        🔤 Fix title casing
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
+              {/* Account icon */}
+              <div style={{position:'relative'}}>
+                <button onClick={() => setShowUserMenu(p => !p)} title="Account"
+                  style={{background:'none',border:'1px solid var(--border)',borderRadius:8,padding:'4px 8px',
+                    cursor:'pointer',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:6}}>
+                  {user?.photoURL
+                    ? <img src={user.photoURL} alt="" style={{width:26,height:26,borderRadius:'50%'}} />
+                    : <span style={{fontSize:18}}>⚙️</span>}
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>▾</span>
+                </button>
+                {showUserMenu && (
+                  <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'var(--bg-secondary)',
+                    border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',minWidth:210,zIndex:1000,
+                    boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>
+                    <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:10,paddingBottom:8,borderBottom:'1px solid var(--border)',lineHeight:1.5}}>
+                      Signed in as<br/>
+                      <strong style={{color:'var(--text-primary)',fontSize:13}}>{user.displayName || user.email}</strong>
+                    </div>
+                    <button className="btn btn-secondary" style={{width:'100%',fontSize:13,textAlign:'left'}}
+                      onClick={() => { setShowUserMenu(false); onSignOut(); }}>Sign out</button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -3371,73 +3466,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                   + Add
                 </button>
               )}
-              {/* Tools dropdown */}
-              {TMDB_API_KEY && !isReadOnly && (
-                <div className="tools-desktop-only" style={{position:'relative'}}>
-                                {(posterProgress || platformProgress || descProgress || scoresProgress) ? (
-                                  <div style={{
-                                    display:'flex', alignItems:'center', gap:8,
-                                    background:'var(--bg-card)', border:'1px solid var(--border)',
-                                    borderRadius:8, padding:'6px 14px', fontSize:13
-                                  }}>
-                                    <span>{posterProgress ? '🎨' : scoresProgress ? '🍅' : descProgress ? '📖' : '📡'}</span>
-                                    <div style={{width:80, height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
-                                      <div style={{
-                                        width: `${((posterProgress||platformProgress||descProgress||scoresProgress).done/(posterProgress||platformProgress||descProgress||scoresProgress).total*100).toFixed(0)}%`,
-                                        height:'100%', background:'var(--accent-gold)', borderRadius:3, transition:'width 0.3s'
-                                      }}/>
-                                    </div>
-                                    <span style={{color:'var(--text-muted)', fontSize:11}}>
-                                      {(posterProgress||platformProgress||descProgress||scoresProgress).done}/{(posterProgress||platformProgress||descProgress||scoresProgress).total}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <button className="btn btn-secondary" onClick={() => setShowToolsMenu(m => !m)}
-                                    style={{fontSize:13}}>
-                                    🛠 Tools ▾
-                                  </button>
-                                )}
-                                {showToolsMenu && !posterProgress && !platformProgress && !descProgress && !scoresProgress && (
-                                  <div style={{
-                                    position:'absolute', top:'calc(100% + 6px)', right:0,
-                                    background:'var(--bg-card)', border:'1px solid var(--border)',
-                                    borderRadius:10, padding:'6px', zIndex:50,
-                                    minWidth:200, boxShadow:'0 8px 24px rgba(0,0,0,0.4)'
-                                  }} onMouseLeave={() => setShowToolsMenu(false)}>
-                                    <div style={{padding:'6px 10px 4px', fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:1}}>
-                                      One-time fetches
-                                    </div>
-                                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
-                                      onClick={() => { setShowToolsMenu(false); fetchAllPosters(); }}>
-                                      🎨 Fetch missing posters
-                                    </button>
-                                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginBottom:4,fontSize:13}}
-                                      onClick={() => { setShowToolsMenu(false); fetchAllPlatforms(); }}>
-                                      📡 Fetch streaming platforms
-                                    </button>
-                                    <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
-                                      onClick={() => { setShowToolsMenu(false); fetchAllDescriptions(); }}>
-                                      📖 Fetch missing descriptions
-                                    </button>
-                                    {OMDB_API_KEY && (
-                                      <button className="btn btn-secondary" style={{width:'100%',textAlign:'left',borderRadius:6,marginTop:4,fontSize:13}}
-                                        onClick={() => { setShowToolsMenu(false); fetchUnwatchedScores(); }}>
-                                        🍅 Fetch unwatched scores
-                                      </button>
-                                    )}
-                                    <div style={{height:1,background:'var(--border)',margin:'4px 0'}}/>
-                                    <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13}}
-                                      onClick={() => { setShowToolsMenu(false); setShowDupesModal(true); }}>
-                                      🔍 Find duplicates
-                                    </button>
-                                    <button className='btn btn-secondary' style={{width:'100%',textAlign:'left',borderRadius:6,fontSize:13,marginTop:4}}
-                                      onClick={() => { setShowToolsMenu(false); fixAllTitleCasing(); }}>
-                                      🔤 Fix title casing
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            )}
+              {/* Tools moved to header */}
             </div>
           </div>
 
