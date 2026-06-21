@@ -1378,12 +1378,31 @@ async function fetchOMDBScores(item) {
       if (res.ok) d = await res.json();
     }
 
-    if (!d || d.Response === 'False') return null;
-    const rt   = d.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value || null;
-    const mc   = d.Ratings?.find(r => r.Source === 'Metacritic')?.Value || null;
-    const imdb = d.imdbRating && d.imdbRating !== 'N/A' ? d.imdbRating : null;
-    if (!rt && !mc && !imdb) return null;
-    return { rtScore: rt, metacriticScore: mc, imdbRating: imdb };
+    const rt   = d && d.Response !== 'False' ? (d.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value || null) : null;
+    const mc   = d && d.Response !== 'False' ? (d.Ratings?.find(r => r.Source === 'Metacritic')?.Value || null) : null;
+    const imdb = d && d.Response !== 'False' && d.imdbRating && d.imdbRating !== 'N/A' ? d.imdbRating : null;
+
+    // TMDB community score — fetch vote_average as fallback when no RT/IMDb data
+    let tmdbScore = null;
+    if (tmdbId && TMDB_API_KEY) {
+      try {
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`);
+        if (tmdbRes.ok) {
+          const td2 = await tmdbRes.json();
+          if (td2.vote_average && td2.vote_average > 0 && (td2.vote_count || 0) > 10) {
+            tmdbScore = td2.vote_average.toFixed(1);
+          }
+        }
+      } catch(e2) {}
+    }
+
+    // Always return at least rtFetched sentinel to prevent re-processing on future batch runs
+    const result = { rtFetched: true };
+    if (rt)        result.rtScore = rt;
+    if (mc)        result.metacriticScore = mc;
+    if (imdb)      result.imdbRating = imdb;
+    if (tmdbScore) result.tmdbScore = tmdbScore;
+    return result;
   } catch(e) { return null; }
 }
 
@@ -1880,7 +1899,7 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, onScore
   }, [item.tmdbId, item.season, item.type]);
   React.useEffect(() => {
     setLiveScores(null);
-    if (item.rtScore || !item.tmdbId || !OMDB_API_KEY) return;
+    if (item.rtScore || item.tmdbScore || item.rtFetched || !OMDB_API_KEY) return;
     fetchOMDBScores(item).then(scores => {
       if (scores) {
         setLiveScores(scores);
@@ -1962,15 +1981,17 @@ function DetailModal({ item, onClose, onEdit, onDelete, onAddNextSeason, onScore
           </div>
 
           {(() => {
-            const rt   = item.rtScore       || liveScores?.rtScore;
+            const rt   = item.rtScore        || liveScores?.rtScore;
             const mc   = item.metacriticScore || liveScores?.metacriticScore;
-            const imdb = item.imdbRating    || liveScores?.imdbRating;
-            if (!rt && !mc && !imdb) return null;
+            const imdb = item.imdbRating     || liveScores?.imdbRating;
+            const tmdb = item.tmdbScore      || liveScores?.tmdbScore;
+            if (!rt && !mc && !imdb && !tmdb) return null;
             return (
               <div style={{display:'flex', gap:18, padding:'10px 0', borderBottom:'1px solid rgba(42,42,62,0.5)', flexWrap:'wrap'}}>
                 {rt   && <span style={{fontSize:13}}>🍅 <strong>{rt}</strong></span>}
                 {mc   && <span style={{fontSize:13}}>🎬 <strong>{mc}</strong></span>}
                 {imdb && <span style={{fontSize:13}}>⭐ <strong>{imdb}</strong></span>}
+                {tmdb && !rt && <span style={{fontSize:13}}>★ <strong>{tmdb}</strong> <span style={{color:'var(--text-muted)', fontSize:11}}>TMDB</span></span>}
               </div>
             );
           })()}
@@ -2107,11 +2128,13 @@ function ContentTableRow({ item, onClick, inlineEdit, setInlineEdit, onUpdate, i
             onClick={e => e.stopPropagation()} />
         ) : <span className="editable-cell">{item.type === 'movie' ? '—' : item.season ? formatSeason(item.season) : '—'}</span>}
       </td>
-      {/* RT Score */}
+      {/* RT Score / TMDB fallback */}
       <td style={{textAlign:'center', fontSize:13, whiteSpace:'nowrap'}}>
         {item.rtScore
           ? <span style={{color: parseInt(item.rtScore) >= 60 ? '#fa320a' : 'var(--text-muted)', fontWeight:600}}>{item.rtScore}</span>
-          : <span style={{color:'var(--text-muted)'}}>—</span>}
+          : item.tmdbScore
+            ? <span style={{color:'#5c85d6', fontWeight:600}}>★{item.tmdbScore}</span>
+            : <span style={{color:'var(--text-muted)'}}>—</span>}
       </td>
       {/* Who */}
       <td onClick={(e) => startEdit(e, 'who')}>
@@ -2519,8 +2542,8 @@ function App({ user, onSignOut, isReadOnly = false }) {
       const td = await test.json();
       if (td.Error === 'Invalid API key!') { showToast('❌ Invalid OMDB API key'); return; }
     } catch(e) { showToast('❌ Could not reach OMDB'); return; }
-    const toFetch = items.filter(i => i.firestoreId && i.title && i.status === 'want_to_watch' && !i.rtScore);
-    if (!toFetch.length) { showToast('✅ All unwatched items already have scores!'); return; }
+    const toFetch = items.filter(i => i.firestoreId && i.title && i.status === 'want_to_watch' && !i.rtFetched);
+    if (!toFetch.length) { showToast('✅ All unwatched items already checked!'); return; }
     setScoresProgress({ done: 0, total: toFetch.length });
     let done = 0, saved = 0;
     const batchSize = 3;
@@ -2531,7 +2554,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
           const scores = await fetchOMDBScores(item);
           if (scores) {
             await db.collection('content').doc(item.firestoreId).update(scores);
-            saved++;
+            if (scores.rtScore || scores.tmdbScore || scores.imdbRating) saved++;
           }
         } catch(e) {}
         done++;
@@ -2962,8 +2985,8 @@ function App({ user, onSignOut, isReadOnly = false }) {
       }
       else if (sortBy === 'network') cmp = (a.network || '').localeCompare(b.network || '');
       else if (sortBy === 'rtScore') {
-        const pa = a.rtScore ? parseInt(a.rtScore) : -1;
-        const pb = b.rtScore ? parseInt(b.rtScore) : -1;
+        const pa = a.rtScore ? parseInt(a.rtScore) : a.tmdbScore ? Math.round(parseFloat(a.tmdbScore) * 10) : -1;
+        const pb = b.rtScore ? parseInt(b.rtScore) : b.tmdbScore ? Math.round(parseFloat(b.tmdbScore) * 10) : -1;
         cmp = pb - pa; // default high-to-low
       }
       return sortDir === 'asc' ? cmp : -cmp;
@@ -3766,7 +3789,7 @@ function App({ user, onSignOut, isReadOnly = false }) {
                         <td>{getTypeEmoji(row.type)}</td>
                         <td style={{fontSize:11,color:'var(--text-muted)'}}>{seasons.join(', ')}</td>
                         <td style={{textAlign:'center',fontSize:13}}>
-                          {(() => { const s = row._items.find(i => i.rtScore); return s ? <span>{s.rtScore}</span> : <span style={{color:'var(--text-muted)'}}>—</span>; })()}
+                          {(() => { const s = row._items.find(i => i.rtScore || i.tmdbScore); if (!s) return <span style={{color:'var(--text-muted)'}}>—</span>; return s.rtScore ? <span>{s.rtScore}</span> : <span style={{color:'#5c85d6'}}>★{s.tmdbScore}</span>; })()}
                         </td>
                         <td>{getWhoEmoji(row.who)}</td>
                         <td><span className="card-network">{row.network || '—'}</span></td>
