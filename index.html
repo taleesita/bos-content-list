@@ -2755,21 +2755,37 @@ function App({ user, onSignOut, isReadOnly = false }) {
               title: rTitle, tmdbId: r.id, mediaType: mt,
               posterUrl: TMDB_IMG_BASE + r.poster_path,
               overview: r.overview || '', platform: null,
-              score: 0, topSeed: seed, topRating: seed.rating,
+              score: 0, seedScores: {}, topSeed: seed,
             });
           }
           const entry = recMap.get(rId);
           entry.score += seed.rating;
-          if (seed.rating > entry.topRating) { entry.topSeed = seed; entry.topRating = seed.rating; }
+          // Track per-seed contribution for diverse attribution
+          entry.seedScores[seed.tmdbId] = (entry.seedScores[seed.tmdbId] || 0) + seed.rating;
         });
       } catch(e) {}
     }));
 
-    // Top 20 by score, deduplicated
+    // Top 20 by score — attribute each rec to its best seed, capped at 3 per seed for diversity
+    const seedAttribCount = {};
+    const MAX_PER_SEED = 3;
     const similar = [...recMap.values()]
       .sort((a, b) => b.score - a.score)
       .slice(0, 20)
-      .map(e => ({ ...e, reason: `Because you liked ${e.topSeed.title}`, because: `Because you liked ${e.topSeed.title}` }));
+      .map(e => {
+        // Pick the highest-contributing seed that hasn't hit the attribution cap
+        let bestSeed = e.topSeed;
+        let bestContrib = -1;
+        for (const seed of seeds) {
+          const contrib = e.seedScores[seed.tmdbId] || 0;
+          if (!contrib) continue;
+          if ((seedAttribCount[seed.tmdbId] || 0) >= MAX_PER_SEED) continue;
+          if (contrib > bestContrib) { bestSeed = seed; bestContrib = contrib; }
+        }
+        seedAttribCount[bestSeed.tmdbId] = (seedAttribCount[bestSeed.tmdbId] || 0) + 1;
+        const { seedScores, topSeed, ...rest } = e;
+        return { ...rest, reason: `Because you liked ${bestSeed.title}`, because: `Because you liked ${bestSeed.title}` };
+      });
 
     results.push(...similar);
 
